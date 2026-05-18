@@ -618,6 +618,13 @@ def main():
         print(f"\nOpening pre-existing zarr in r+ mode: {out_path}")
         out_z = zarr.open(str(out_path), mode="r+")
         print(f"  Opened zarr: shape={out_z.shape}  chunks={out_z.chunks}")
+        expected_h, expected_w = out_z.shape[3], out_z.shape[4]
+        if refined_h != expected_h or refined_w != expected_w:
+            raise ValueError(
+                f"Canvas size mismatch: positions give ({refined_h}, {refined_w}) "
+                f"but pre-allocated zarr has ({expected_h}, {expected_w}). "
+                "Re-run Stage 1 to reallocate zarr with current positions."
+            )
 
     n_chunks = math.ceil(n_z_proc / args.z_chunk)
 

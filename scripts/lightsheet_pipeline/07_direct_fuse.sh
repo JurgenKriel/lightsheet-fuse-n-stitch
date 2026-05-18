@@ -30,6 +30,11 @@
 #
 # Full-stack flags — VALIDATED 2026-05-18 via 08_fusion_dev.ipynb substack sweep:
 #   --sigma-frac 0.9  --taper-px 288  --ncc-threshold 0.5  --fusion-axis 2
+#
+# For full-stack runs (recommended): use the 2-stage parallel workflow instead.
+# Stage 1 (NCC + zarr init): sbatch 07_direct_fuse_stage1_ncc.sh
+# Stage 2 (8-task array):    sbatch --dependency=afterok:<job1_id> 07_direct_fuse_stage2_parallel.sh
+# Parallel run: ~50 min vs ~3.3 hours for this single-job script.
 
 MANIFEST="/vast/scratch/users/kriel.j/KL018_lightsheet/tile_manifest.json"
 # Default CZI: use the staged copy on /vast/scratch if it exists, else stornext.
@@ -69,5 +74,5 @@ python "${SCRIPT_DIR}/07_direct_fuse.py" \
     --ncc-threshold      0.5 \
     --fusion-axis        2 \
     --z-chunk            64 \
-    --workers            8
+    --workers            12
 echo "Done."

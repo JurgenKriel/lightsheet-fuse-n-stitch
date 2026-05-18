@@ -141,11 +141,11 @@ omexml.addimage(
     storedshape=(T * C * Z, 1, 1, Y, X, 1),
     axes="TCZYX",
     PhysicalSizeX=dx,
-    PhysicalSizeXUnit="µm",
+    PhysicalSizeXUnit="um",
     PhysicalSizeY=dy,
-    PhysicalSizeYUnit="µm",
+    PhysicalSizeYUnit="um",
     PhysicalSizeZ=dz,
-    PhysicalSizeZUnit="µm",
+    PhysicalSizeZUnit="um",
 )
 description = omexml.tostring()
 

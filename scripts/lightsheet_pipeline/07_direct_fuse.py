@@ -571,15 +571,24 @@ def main():
             print(f"  M={m:2d}: x={b.x:6d} y={b.y:6d} w={b.w} h={b.h}")
         return
 
-    # Optionally refine tile positions via NCC + MST
-    print("\nRefining tile positions...")
-    ncc_out = out_path.parent / "ncc_scores.json"
-    refined_pos = refine_tile_positions(
-        czi, layout,
-        skip_refine=args.skip_refine,
-        ncc_threshold=args.ncc_threshold,
-        ncc_out_path=ncc_out,
-    )
+    # Optionally refine tile positions via NCC + MST, or load pre-computed positions
+    if args.load_positions:
+        print(f"  Loading pre-computed tile positions from: {args.load_positions}")
+        with open(args.load_positions) as _f:
+            ncc_data = json.load(_f)
+        _pos_list = ncc_data["tile_positions_refined"]
+        refined_pos = {p["M"]: {"x": p["x"], "y": p["y"], "w": p["w"], "h": p["h"]}
+                       for p in _pos_list}
+        print(f"  Loaded positions for {len(refined_pos)} tiles (skipping NCC).")
+    else:
+        print("\nRefining tile positions...")
+        ncc_out = out_path.parent / "ncc_scores.json"
+        refined_pos = refine_tile_positions(
+            czi, layout,
+            skip_refine=args.skip_refine,
+            ncc_threshold=args.ncc_threshold,
+            ncc_out_path=ncc_out,
+        )
 
     # Recompute canvas extent from refined positions
     all_x1 = [p["x"] + p["w"] for p in refined_pos.values()]
@@ -596,14 +605,19 @@ def main():
     # Build output zarr — TCZYX
     out_shape = (n_t, n_c, n_z_proc, refined_h, refined_w)
     out_chunk = (1, 1, args.z_chunk, min(512, refined_h), min(512, refined_w))
-    print(f"\nCreating output zarr: shape={out_shape}  chunks={out_chunk}")
-    out_z = zarr.open(
-        str(out_path),
-        mode="w",
-        shape=out_shape,
-        chunks=out_chunk,
-        dtype=np.uint16,
-    )
+    if args.zarr_mode == "w":
+        print(f"\nCreating output zarr: shape={out_shape}  chunks={out_chunk}")
+        out_z = zarr.open(
+            str(out_path),
+            mode="w",
+            shape=out_shape,
+            chunks=out_chunk,
+            dtype=np.uint16,
+        )
+    else:  # r+
+        print(f"\nOpening pre-existing zarr in r+ mode: {out_path}")
+        out_z = zarr.open(str(out_path), mode="r+")
+        print(f"  Opened zarr: shape={out_z.shape}  chunks={out_z.chunks}")
 
     n_chunks = math.ceil(n_z_proc / args.z_chunk)
 
@@ -662,7 +676,10 @@ def main():
                 # Normalize and write
                 mask = w_canvas > 0
                 canvas[mask] /= w_canvas[mask]
-                out_z[t, c, z0_loc : z0_loc + nz] = np.clip(canvas, 0, 65535).astype(np.uint16)
+                # Use absolute Z index when writing into pre-allocated full-shape zarr (r+ mode),
+                # or local Z index when writing into a substack zarr created by this job (w mode).
+                z_write = z0_abs if args.zarr_mode == "r+" else z0_loc
+                out_z[t, c, z_write : z_write + nz] = np.clip(canvas, 0, 65535).astype(np.uint16)
 
     print(f"\nDone. Output: {out_path}")
     print(f"  Shape (TCZYX): {out_z.shape}")

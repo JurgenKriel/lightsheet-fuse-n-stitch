@@ -35,14 +35,19 @@ Plans:
 - [ ] 01-03-PLAN.md — Create 08_fusion_dev.ipynb with 6-cell parameter sweep workflow
 
 ### Phase 2: Full-Stack Fusion
-**Goal**: Full 1557-plane KL018 volume is fused with validated parameters and written as a complete `fused_direct.zarr`
+**Goal**: Full 1557-plane KL018 volume is fused with validated parameters and written as a complete `fused_direct.zarr` as fast as possible by exploiting all available GPU resources via a two-stage SLURM approach
 **Depends on**: Phase 1
 **Requirements**: FULLSTACK-01, FULLSTACK-02
 **Success Criteria** (what must be TRUE):
   1. `07_direct_fuse.sh` contains the parameter values confirmed during Phase 1 notebook evaluation
   2. SLURM job completes without error and `fused_direct.zarr` exists with shape `(1, 2, 1557, H, W)`
   3. Spot-check of mid-volume Z-planes shows no visible tile seams, illumination gradients, or ghosting artifacts
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+- [ ] 02-01-PLAN.md — Extend 07_direct_fuse.py: add --load-positions and --zarr-mode flags, conditional write index
+- [ ] 02-02-PLAN.md — Create 07_direct_fuse_stage1_ncc.sh and 07_direct_fuse_stage2_parallel.sh (8-task array)
+- [ ] 02-03-PLAN.md — Update 07_direct_fuse.sh with validated params, workers=12, parallel workflow reference
 
 ### Phase 3: OME-TIFF Export
 **Goal**: Stitched zarr is exported as a pyramidal OME-TIFF that opens correctly in QuPath, ImageJ, and Napari with accurate pixel-size metadata
@@ -59,5 +64,5 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Substack & Notebook | 2/3 | In progress | - |
-| 2. Full-Stack Fusion | 0/TBD | Not started | - |
+| 2. Full-Stack Fusion | 0/3 | Not started | - |
 | 3. OME-TIFF Export | 0/TBD | Not started | - |

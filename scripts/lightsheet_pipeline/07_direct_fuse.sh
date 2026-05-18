@@ -28,8 +28,8 @@
 #       --z-chunk  64 \
 #       --workers  8
 #
-# Full-stack flags (edit values here after substack validation):
-#   --taper-px 64  --sigma-frac 0.3  --ncc-threshold 0.05  --fusion-axis 2
+# Full-stack flags — VALIDATED 2026-05-18 via 08_fusion_dev.ipynb substack sweep:
+#   --sigma-frac 0.9  --taper-px 288  --ncc-threshold 0.5  --fusion-axis 2
 
 MANIFEST="/vast/scratch/users/kriel.j/KL018_lightsheet/tile_manifest.json"
 # Default CZI: use the staged copy on /vast/scratch if it exists, else stornext.
@@ -61,9 +61,13 @@ module load CUDA/12.1
 source /stornext/System/data/apps/anaconda3/anaconda3-latest/etc/profile.d/conda.sh
 conda activate /vast/scratch/users/kriel.j/lightsheet_env
 
-echo "Starting direct CZI → fused.zarr (z-chunk=64, workers=8)..."
+echo "Starting direct CZI → fused.zarr (validated params from substack sweep 2026-05-18)..."
 python "${SCRIPT_DIR}/07_direct_fuse.py" \
     --czi      "$CZI_ARG" \
-    --z-chunk  64 \
-    --workers  8
+    --sigma-frac         0.9 \
+    --taper-px           288 \
+    --ncc-threshold      0.5 \
+    --fusion-axis        2 \
+    --z-chunk            64 \
+    --workers            8
 echo "Done."

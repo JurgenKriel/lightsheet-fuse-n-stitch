@@ -40,6 +40,8 @@
 # Index: SLURM_ARRAY_TASK_ID - 1 (0-based)
 # All boundaries are multiples of 64 (zarr chunk size) to prevent chunk collision.
 # --------------------------------------------------------------------------
+set -euo pipefail
+
 Z_STARTS=(0 256 448 640 832 1024 1216 1408)
 Z_ENDS=(256 448 640 832 1024 1216 1408 1557)
 

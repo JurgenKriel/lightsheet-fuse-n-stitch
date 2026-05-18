@@ -36,6 +36,8 @@
 # Stage 2 (8-task array):    sbatch --dependency=afterok:<job1_id> 07_direct_fuse_stage2_parallel.sh
 # Parallel run: ~50 min vs ~3.3 hours for this single-job script.
 
+set -euo pipefail
+
 MANIFEST="/vast/scratch/users/kriel.j/KL018_lightsheet/tile_manifest.json"
 # Default CZI: use the staged copy on /vast/scratch if it exists, else stornext.
 STAGED_CZI="/vast/scratch/users/kriel.j/KL018_lightsheet/KL018_85_D7_CT2AvIII_Overview.czi"

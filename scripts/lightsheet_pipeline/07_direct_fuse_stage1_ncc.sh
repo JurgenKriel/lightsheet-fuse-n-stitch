@@ -26,6 +26,8 @@
 # Usage:
 #   sbatch 07_direct_fuse_stage1_ncc.sh
 
+set -euo pipefail
+
 SCRATCH="/vast/scratch/users/kriel.j/KL018_lightsheet"
 CZI_PATH="$SCRATCH/KL018_85_D7_CT2AvIII_Overview.czi"
 OUT_ZARR="$SCRATCH/fused_direct.zarr"

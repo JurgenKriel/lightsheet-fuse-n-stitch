@@ -550,7 +550,8 @@ def main():
     z_start = args.z_start
     z_end = args.z_end if args.z_end is not None else n_z
     n_z_proc = z_end - z_start
-    assert z_start < z_end, f"--z-start ({z_start}) must be less than --z-end ({z_end})"
+    if z_start >= z_end:
+        raise ValueError(f"--z-start ({z_start}) must be less than --z-end ({z_end})")
     if z_start != 0 or args.z_end is not None:
         print(f"  Substack mode: Z={z_start}:{z_end} ({n_z_proc} planes)")
 

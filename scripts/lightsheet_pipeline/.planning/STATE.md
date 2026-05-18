@@ -5,7 +5,7 @@
 See: .planning/PROJECT.md (updated 2026-05-18)
 
 **Core value:** A single pyramidal OME-TIFF of the KL018 brain volume with no visible fusion artifacts — usable in QuPath, Napari, Imaris, and ImageJ without further processing
-**Current focus:** Phase 1 — Substack & Notebook
+**Current focus:** Phase 1 (completing 01-03) → Phase 2 — Parallel Fusion (planned, ready to execute)
 
 ## Current Position
 

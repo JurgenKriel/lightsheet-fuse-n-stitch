@@ -64,5 +64,5 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Substack & Notebook | 2/3 | In progress | - |
-| 2. Full-Stack Fusion | 0/3 | Not started | - |
+| 2. Full-Stack Fusion | 0/3 | Ready to execute | - |
 | 3. OME-TIFF Export | 0/TBD | Not started | - |

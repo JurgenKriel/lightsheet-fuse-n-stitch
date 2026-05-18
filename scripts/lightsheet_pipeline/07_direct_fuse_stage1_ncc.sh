@@ -78,7 +78,7 @@ else
     echo "ncc_scores.json not found — running NCC now (z=728:729 midpoint plane)..."
     python "${SCRIPT_DIR}/07_direct_fuse.py" \
         --czi            "$CZI_PATH" \
-        --out            "$OUT_ZARR" \
+        --out            "${SCRATCH}/ncc_probe.zarr" \
         --sigma-frac     0.9 \
         --taper-px       288 \
         --ncc-threshold  0.5 \

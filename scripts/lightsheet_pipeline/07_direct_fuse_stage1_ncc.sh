@@ -59,7 +59,7 @@ if [ -f "$NCC_JSON" ]; then
         echo "WARNING: threshold mismatch — re-running NCC with ncc_threshold=0.5"
         python "${SCRIPT_DIR}/07_direct_fuse.py" \
             --czi            "$CZI_PATH" \
-            --out            "$OUT_ZARR" \
+            --out            "${SCRATCH}/ncc_probe_rerun.zarr" \
             --sigma-frac     0.9 \
             --taper-px       288 \
             --ncc-threshold  0.5 \
@@ -67,8 +67,7 @@ if [ -f "$NCC_JSON" ]; then
             --z-chunk        64 \
             --workers        16 \
             --z-start        0 \
-            --z-end          1 \
-            --skip-refine    false
+            --z-end          1
         echo "NCC re-run complete."
     else
         echo "NCC threshold matches — reusing existing ncc_scores.json."

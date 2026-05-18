@@ -10,9 +10,9 @@ See: .planning/PROJECT.md (updated 2026-05-18)
 ## Current Position
 
 Phase: 1 of 3 (Substack & Notebook)
-Plan: 0 of TBD in current phase
-Status: Ready to plan
-Last activity: 2026-05-18 — Roadmap initialized
+Plan: 2 of 3 in current phase
+Status: Executing — Wave 2 (01-03 notebook checkpoint pending)
+Last activity: 2026-05-18 — Wave 1 complete (01-01, 01-02)
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -67,5 +67,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-05-18
-Stopped at: Roadmap created — Phase 1 ready to plan
+Stopped at: Phase 1 Wave 1 executing (plans 01-01 and 01-02 in progress)
 Resume file: None

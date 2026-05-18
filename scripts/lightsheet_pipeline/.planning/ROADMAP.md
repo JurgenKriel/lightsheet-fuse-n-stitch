@@ -21,14 +21,18 @@ with correct metadata and verifies viewer compatibility.
 **Goal**: User can produce and visually evaluate a 100-slice fused substack and arrive at a validated parameter set ready to paste into the SLURM script
 **Depends on**: Nothing (first phase)
 **Requirements**: SUBSTACK-01, SUBSTACK-02, NOTEBOOK-01, NOTEBOOK-02, NOTEBOOK-03, NOTEBOOK-04, NOTEBOOK-05, NOTEBOOK-06
+**Plans**: 3 plans
 **Success Criteria** (what must be TRUE):
   1. User can run `07_direct_fuse.py --z-start 728 --z-end 828` and receive a valid zarr output without modifying any other flags
   2. The substack zarr is produced in under 30 minutes on a GPU SLURM node
   3. User can open `08_fusion_dev.ipynb`, run all cells, and see a mid-Z maximum-intensity mosaic of all 30 stitched tiles
   4. Notebook renders a seam-quality heatmap and a per-tile illumination uniformity plot that make fusion artifacts visible
   5. Notebook outputs a `best_params` dict the user can copy directly into `07_direct_fuse.sh` without any editing
-**Plans**: TBD
-**UI hint**: yes
+
+Plans:
+- [x] 01-01-PLAN.md — Extend 07_direct_fuse.py: add 5 CLI flags, fix z-loop indexing, write ncc_scores.json (2026-05-18)
+- [x] 01-02-PLAN.md — Update 07_direct_fuse_README.md and 07_direct_fuse.sh with new flag docs (2026-05-18)
+- [ ] 01-03-PLAN.md — Create 08_fusion_dev.ipynb with 6-cell parameter sweep workflow
 
 ### Phase 2: Full-Stack Fusion
 **Goal**: Full 1557-plane KL018 volume is fused with validated parameters and written as a complete `fused_direct.zarr`
@@ -54,6 +58,6 @@ with correct metadata and verifies viewer compatibility.
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Substack & Notebook | 0/TBD | Not started | - |
+| 1. Substack & Notebook | 2/3 | In progress | - |
 | 2. Full-Stack Fusion | 0/TBD | Not started | - |
 | 3. OME-TIFF Export | 0/TBD | Not started | - |

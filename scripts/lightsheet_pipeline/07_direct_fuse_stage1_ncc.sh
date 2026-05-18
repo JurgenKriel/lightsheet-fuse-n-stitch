@@ -108,7 +108,8 @@ out_path = "/vast/scratch/users/kriel.j/KL018_lightsheet/fused_direct.zarr"
 import os
 manifest_path = "/vast/scratch/users/kriel.j/KL018_lightsheet/tile_manifest_corrected.json"
 if os.path.exists(manifest_path):
-    man = json.load(open(manifest_path))
+    with open(manifest_path) as f:
+        man = json.load(f)
     H = man["canvas_shape"]["H"]
     W = man["canvas_shape"]["W"]
     print(f"  Canvas dims from manifest: H={H}  W={W}")

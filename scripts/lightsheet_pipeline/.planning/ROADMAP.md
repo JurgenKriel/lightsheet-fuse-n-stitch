@@ -45,9 +45,9 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 02-01-PLAN.md — Extend 07_direct_fuse.py: add --load-positions and --zarr-mode flags, conditional write index
-- [ ] 02-02-PLAN.md — Create 07_direct_fuse_stage1_ncc.sh and 07_direct_fuse_stage2_parallel.sh (8-task array)
-- [ ] 02-03-PLAN.md — Update 07_direct_fuse.sh with validated params, workers=12, parallel workflow reference
+- [x] 02-01-PLAN.md — Extend 07_direct_fuse.py: add --load-positions and --zarr-mode flags, conditional write index (2026-05-18)
+- [x] 02-02-PLAN.md — Create 07_direct_fuse_stage1_ncc.sh and 07_direct_fuse_stage2_parallel.sh (8-task array) (2026-05-18)
+- [x] 02-03-PLAN.md — Update 07_direct_fuse.sh with validated params, workers=12, parallel workflow reference (2026-05-18)
 
 ### Phase 3: OME-TIFF Export
 **Goal**: Stitched zarr is exported as a pyramidal OME-TIFF that opens correctly in QuPath, ImageJ, and Napari with accurate pixel-size metadata
@@ -64,5 +64,5 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Substack & Notebook | 2/3 | In progress | - |
-| 2. Full-Stack Fusion | 0/3 | Ready to execute | - |
+| 2. Full-Stack Fusion | 3/3 | Complete | 2026-05-18 |
 | 3. OME-TIFF Export | 0/TBD | Not started | - |

@@ -579,6 +579,11 @@ def main():
         _pos_list = ncc_data["tile_positions_refined"]
         refined_pos = {p["M"]: {"x": p["x"], "y": p["y"], "w": p["w"], "h": p["h"]}
                        for p in _pos_list}
+        if len(refined_pos) != n_tiles:
+            raise ValueError(
+                f"--load-positions: JSON contains {len(refined_pos)} tile positions "
+                f"but CZI layout has {n_tiles} tiles."
+            )
         print(f"  Loaded positions for {len(refined_pos)} tiles (skipping NCC).")
     else:
         print("\nRefining tile positions...")

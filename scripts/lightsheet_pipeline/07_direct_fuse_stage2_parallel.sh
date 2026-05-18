@@ -2,8 +2,8 @@
 #SBATCH --job-name=ls_fuse_par
 #SBATCH --partition=gpuq
 #SBATCH --gres=gpu:A30:1
-#SBATCH --cpus-per-task=12
-#SBATCH --mem=80G
+#SBATCH --cpus-per-task=6
+#SBATCH --mem=150G
 #SBATCH --time=02:00:00
 #SBATCH --array=1-8
 #SBATCH --output=/vast/scratch/users/kriel.j/output.%j.%a.%N.log
@@ -110,7 +110,7 @@ python "${SCRIPT_DIR}/07_direct_fuse.py" \
     --ncc-threshold  0.5 \
     --fusion-axis    2 \
     --z-chunk        64 \
-    --workers        12
+    --workers        6
 
 FUSE_EXIT=$?
 echo ""

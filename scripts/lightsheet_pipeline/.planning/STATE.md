@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-05-18)
 
 **Core value:** A single pyramidal OME-TIFF of the KL018 brain volume with no visible fusion artifacts — usable in QuPath, Napari, Imaris, and ImageJ without further processing
-**Current focus:** Phase 2.5 (ZarrStitcher rework) in progress — plans 01+02+03+05 complete; only plan 04 (SLURM scripts + human checkpoint) remaining
+**Current focus:** Phase 2.5 (ZarrStitcher rework) — CODE COMPLETE (all 5 plans landed). Runtime validation pending: run the substack pre-flight per RESEARCH §Validation Strategy, then `sbatch 08_stitch_stage1_register.sh` + dependency Stage 2. Phase 3 (OME-TIFF Export) unblocks after the full SLURM run produces a clean `fused_direct.zarr`.
 
 ## Current Position
 
-Phase: 2.5 of 3 (ZarrStitcher Rework) — IN PROGRESS
-Plan: 4 of 5 complete
-Status: 08_stitch.py + Phase 2.5 notebook diagnostics cell all in place; running plan 04 (SLURM scripts) next
-Last activity: 2026-05-19 — plan 02.5-05 complete (Phase 2.5 cell appended at index 9 of 08_fusion_dev.ipynb; STITCH-04 satisfied)
+Phase: 2.5 of 3 (ZarrStitcher Rework) — CODE COMPLETE
+Plan: 5 of 5 complete
+Status: All deliverables landed. Awaiting user-initiated SLURM submission (gated on substack pre-flight).
+Last activity: 2026-05-19 — plan 02.5-04 complete (08_stitch_stage{1,2}_*.sh SLURM scripts; STITCH-05 scripts delivered, STITCH-06 fully verified)
 
-Progress: [████████░░] 80%
+Progress: [██████████] 100% (code) / runtime-validation pending
 
 ## Performance Metrics
 

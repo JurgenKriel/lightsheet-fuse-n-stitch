@@ -13,7 +13,7 @@ with correct metadata and verifies viewer compatibility.
 
 - [ ] **Phase 1: Substack & Notebook** - Add `--z-start`/`--z-end` to `07_direct_fuse.py` and build `08_fusion_dev.ipynb` for interactive parameter tuning
 - [ ] **Phase 2: Full-Stack Fusion** - Run validated parameters on the complete 1557-plane KL018 dataset via SLURM
-- [ ] **Phase 2.5: ZarrStitcher Stitching Rework** - Replace ad-hoc NCC+MST + cosine-taper stitching with a PetaKit5D-ZarrStitcher-equivalent globally-optimised stitcher to eliminate residual tile seams (keeps current dual-side fusion as-is)
+- [x] **Phase 2.5: ZarrStitcher Stitching Rework** - Replace ad-hoc NCC+MST + cosine-taper stitching with a PetaKit5D-ZarrStitcher-equivalent globally-optimised stitcher to eliminate residual tile seams (keeps current dual-side fusion as-is) (code complete 2026-05-19; runtime validation pending)
 - [ ] **Phase 3: OME-TIFF Export** - Convert fused zarr to pyramidal OME-TIFF with correct metadata and verify viewer compatibility
 
 ## Phase Details
@@ -68,7 +68,7 @@ Plans:
 - [x] 02.5-01-PLAN.md — Create mvstitch_env conda env + environment_mvstitch.yml (STITCH-07) (2026-05-19)
 - [x] 02.5-02-PLAN.md — 08_stitch.py Stage 1 register: global LSQ + stitch_positions.json + stitch_diagnostics.json (STITCH-01, 03, 06, 07) (2026-05-19)
 - [x] 02.5-03-PLAN.md — 08_stitch.py Stage 2 blend: weighted_average_fusion + blending_widths, r+ zarr writes at absolute Z indices (STITCH-02, 05, 06) (2026-05-19)
-- [ ] 02.5-04-PLAN.md — 08_stitch_stage1_register.sh + 08_stitch_stage2_blend.sh SLURM scripts (STITCH-05)
+- [x] 02.5-04-PLAN.md — 08_stitch_stage1_register.sh + 08_stitch_stage2_blend.sh SLURM scripts (STITCH-05) (2026-05-19)
 - [x] 02.5-05-PLAN.md — 08_fusion_dev.ipynb Phase 2.5 diagnostics cell: residual heatmap, NCC ≥ 0.85, illumination ≤ 1.15 (STITCH-04) (2026-05-19)
 
 ### Phase 3: OME-TIFF Export
@@ -87,5 +87,5 @@ Plans:
 |-------|----------------|--------|-----------|
 | 1. Substack & Notebook | 2/3 | In progress | - |
 | 2. Full-Stack Fusion | 3/3 | Complete | 2026-05-18 |
-| 2.5. ZarrStitcher Stitching Rework | 4/5 | In progress | - |
+| 2.5. ZarrStitcher Stitching Rework | 5/5 | Code complete (runtime validation pending) | 2026-05-19 |
 | 3. OME-TIFF Export | 0/TBD | Not started | - |

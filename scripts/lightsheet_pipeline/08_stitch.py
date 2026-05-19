@@ -350,14 +350,105 @@ def stage_register(args: argparse.Namespace, czi: CziFile, layout: dict) -> None
 
 
 # ---------------------------------------------------------------------------
-# Stage 2: BLEND  (placeholder — implemented in plan 02.5-03)
-# Will call fusion.fuse(..., fusion_func=fusion.weighted_average_fusion, ...)
+# Stage 2: BLEND
 # ---------------------------------------------------------------------------
 
 def stage_blend(args: argparse.Namespace, czi: CziFile, layout: dict) -> None:
-    raise NotImplementedError(
-        "stage_blend is implemented in plan 02.5-03. Run plan 02.5-03 then retry."
-    )
+    """
+    Blend the assigned Z-slab [args.z_start, args.z_end) into the pre-allocated
+    output zarr at absolute Z indices, using multiview-stitcher's
+    weighted_average_fusion with N-D blending_widths.
+
+    STITCH-02: blending_widths produces smoothly-normalised weights across
+    tile overlaps in N-D, replacing the broken 2-D cosine-taper accumulator
+    that caused brightness ramps at multi-tile junctions.
+    STITCH-05: opens output zarr in mode='r+' so parallel SLURM array tasks
+    can write disjoint Z-slabs without truncating the shared canvas
+    (matches Phase 2 plan 02-01 contract).
+    """
+    import zarr
+
+    # ---- 1. Load Stage 1 registered positions --------------------------
+    pos_path = Path(args.out_dir) / "stitch_positions.json"
+    if not pos_path.exists():
+        raise FileNotFoundError(
+            f"stitch_positions.json not found at {pos_path}. "
+            "Run Stage 1 (--stage register) first."
+        )
+    with open(pos_path) as f:
+        positions = json.load(f)
+    print(f"[Stage 2] Loaded registered positions for {len(positions)} tiles")
+
+    # ---- 2. Open output zarr in r+ (NEVER mode='w' in parallel tasks) ---
+    out_z = zarr.open(args.out_zarr, mode="r+")
+    print(f"[Stage 2] Output zarr: shape={out_z.shape}  chunks={out_z.chunks}")
+
+    # ---- 3. Iterate (T, C, Z-chunk) -------------------------------------
+    n_t = int(layout.get("n_t", 1))
+    n_c = int(layout.get("n_c", 2))
+    z_chunk = max(1, int(args.z_chunk))
+    blending = {"z": 0, "y": int(args.blend_y), "x": int(args.blend_x)}
+    print(f"[Stage 2] Range Z=[{args.z_start}:{args.z_end}) chunk={z_chunk} "
+          f"blending_widths={blending}")
+    print(f"[Stage 2] Tiles: {layout['n_tiles']} channels: {n_c}")
+
+    for t in range(n_t):
+        for c in range(n_c):
+            for chunk_z0 in range(args.z_start, args.z_end, z_chunk):
+                chunk_z1 = min(chunk_z0 + z_chunk, args.z_end)
+                nz = chunk_z1 - chunk_z0
+                print(f"[Stage 2]  t={t} c={c} Z=[{chunk_z0}:{chunk_z1}) "
+                      f"({nz} planes)")
+
+                # Build sims with stage_metadata translation (initial guess)
+                sims = build_tile_sims(
+                    czi, layout, chunk_z0, chunk_z1, c=c,
+                    sigma_frac=args.sigma_frac,
+                    fusion_axis=args.fusion_axis,
+                    workers=args.workers,
+                )
+                # Reattach Stage 1 'registered' transform on each sim
+                for m, sim in enumerate(sims):
+                    key = str(m)
+                    if key not in positions:
+                        raise KeyError(
+                            f"stitch_positions.json missing tile {m}; "
+                            "Stage 1 output is incomplete."
+                        )
+                    _apply_registered_transform(
+                        sim, positions[key]["translation_um"]
+                    )
+
+                # Fuse with feather/blending widths in N-D (STITCH-02)
+                fused = fusion.fuse(
+                    sims=sims,
+                    transform_key="registered",
+                    fusion_func=fusion.weighted_average_fusion,
+                    blending_widths=blending,
+                    output_stack_mode="union",
+                    output_chunksize={"z": nz, "y": 512, "x": 512},
+                )
+                # Materialise the dask result and clip to uint16 range
+                arr = np.asarray(fused.compute())
+                arr = np.clip(arr, 0, 65535).astype(np.uint16)
+
+                # Defensive: trim/pad the fused canvas to the zarr H/W if
+                # output_stack_mode='union' produced a slightly different
+                # extent (off-by-one is possible at sub-pixel translations).
+                H, W = int(out_z.shape[-2]), int(out_z.shape[-1])
+                if arr.shape[-2] != H or arr.shape[-1] != W:
+                    fitted = np.zeros((nz, H, W), dtype=np.uint16)
+                    hh = min(H, arr.shape[-2])
+                    ww = min(W, arr.shape[-1])
+                    fitted[:, :hh, :ww] = arr[:, :hh, :ww]
+                    arr = fitted
+
+                # Write at ABSOLUTE Z indices into the pre-allocated zarr
+                out_z[t, c, chunk_z0:chunk_z1] = arr
+                print(f"[Stage 2]    wrote out_z[{t},{c},{chunk_z0}:{chunk_z1}] "
+                      f"= {arr.shape} uint16")
+
+    print(f"[Stage 2] Done range Z=[{args.z_start}:{args.z_end}).")
 
 
 # ---------------------------------------------------------------------------

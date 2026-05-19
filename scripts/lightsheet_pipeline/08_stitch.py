@@ -231,6 +231,47 @@ def _flatten_groupwise(groupwise: Any) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Affine reattach helpers (Stage 2 input from Stage 1 JSON)
+# ---------------------------------------------------------------------------
+
+def _build_affine_um(translation_um: dict) -> np.ndarray:
+    """
+    Build a 4x4 pure-translation affine matrix in physical units (µm).
+    multiview-stitcher uses (z, y, x) convention; matrix rows correspond to
+    that order. Homogeneous identity for rotation/scale.
+    """
+    m = np.eye(4, dtype=np.float64)
+    m[0, 3] = float(translation_um.get("z", 0.0))
+    m[1, 3] = float(translation_um.get("y", 0.0))
+    m[2, 3] = float(translation_um.get("x", 0.0))
+    return m
+
+
+def _apply_registered_transform(sim: Any, translation_um: dict) -> None:
+    """
+    Reattach the Stage-1-computed 'registered' transform onto `sim`.
+
+    multiview-stitcher 0.1.52 exposes set_sim_affine and (in newer minor
+    versions) set_sim_affine_from_array. We use whichever exists, falling
+    back to a manual xarray.DataArray construction with the lib's dim names
+    ("x_in", "x_out") that match the affine xarrays returned by register().
+    """
+    affine_np = _build_affine_um(translation_um)
+    setter = getattr(si_utils, "set_sim_affine_from_array", None)
+    if setter is not None:
+        setter(sim, affine_np, transform_key="registered")
+        return
+    # Manual xarray build — same shape register() returns
+    import xarray as xr
+    da = xr.DataArray(
+        affine_np,
+        dims=("x_in", "x_out"),
+        coords={"x_in": ["z", "y", "x", "1"], "x_out": ["z", "y", "x", "1"]},
+    )
+    si_utils.set_sim_affine(sim, da, transform_key="registered")
+
+
+# ---------------------------------------------------------------------------
 # Stage 1: REGISTER
 # ---------------------------------------------------------------------------
 

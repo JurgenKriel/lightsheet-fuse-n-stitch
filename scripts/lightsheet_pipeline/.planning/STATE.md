@@ -5,33 +5,33 @@
 See: .planning/PROJECT.md (updated 2026-05-18)
 
 **Core value:** A single pyramidal OME-TIFF of the KL018 brain volume with no visible fusion artifacts — usable in QuPath, Napari, Imaris, and ImageJ without further processing
-**Current focus:** Phase 2.5 (ZarrStitcher rework) in progress — plan 01 (env) complete, plan 02 next
+**Current focus:** Phase 2.5 (ZarrStitcher rework) in progress — plans 01 (env) + 02 (Stage 1 register) complete, plan 03 (Stage 2 blend) next
 
 ## Current Position
 
 Phase: 2.5 of 3 (ZarrStitcher Rework) — IN PROGRESS
-Plan: 1 of 5 complete
-Status: mvstitch_env provisioned; spawning plan 02 (08_stitch.py Stage 1)
-Last activity: 2026-05-19 — plan 02.5-01 complete (mvstitch_env at /vast/scratch/users/kriel.j/mvstitch_env)
+Plan: 2 of 5 complete
+Status: 08_stitch.py Stage 1 (register) landed; spawning plan 03 (Stage 2 blend)
+Last activity: 2026-05-19 — plan 02.5-02 complete (08_stitch.py 380 lines, --help exits 0 in mvstitch_env, STITCH-06 verified on protected function bodies)
 
-Progress: [██░░░░░░░░] 20%
+Progress: [████░░░░░░] 40%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 0
-- Average duration: -
-- Total execution time: 0 hours
+- Total plans completed: 1 (this session)
+- Average duration: 3m
+- Total execution time: <1 hour
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| - | - | - | - |
+| 02.5 | 1     | 3m    | 3m       |
 
 **Recent Trend:**
-- Last 5 plans: -
-- Trend: -
+- 02.5-02 (2026-05-19): 3m — 1 file created (08_stitch.py, 380 lines), 1 commit, 2 tasks
+- Trend: small focused plans — fast
 
 *Updated after each plan completion*
 
@@ -46,6 +46,9 @@ Recent decisions affecting current work:
 - Init: Middle 100 slices (z=728:828) — most tissue content, representative seam quality
 - Init: Pyramid via tifffile BigTIFF — tifffile already in environment.yml
 - Init: Parameter sweep targets sigma_frac, taper_px, NCC threshold, fusion axis
+- 2026-05-19 (02.5-02): Use importlib.import_module('07_direct_fuse') instead of renaming legacy module — preserves all existing SLURM script references
+- 2026-05-19 (02.5-02): Defensive parser for multiview-stitcher pairwise_registration_results — schema not contractually frozen at 0.1.52, lock down in plan 02.5-05 after observing a real register() run
+- 2026-05-19 (02.5-02): Persist per-tile transforms in BOTH µm and px (µm = canonical mvstitch unit, px = what 08_fusion_dev.ipynb + zarr writes consume)
 
 ### Pending Todos
 
@@ -66,6 +69,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-18
-Stopped at: Phase 1 Wave 1 executing (plans 01-01 and 01-02 in progress)
+Last session: 2026-05-19
+Stopped at: Plan 02.5-02 complete — ready to spawn plan 02.5-03 (Stage 2 blend)
 Resume file: None

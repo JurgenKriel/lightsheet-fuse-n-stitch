@@ -26,7 +26,7 @@
 - [x] **STITCH-01**: A new module `08_stitch.py` (or refactored region inside `07_direct_fuse.py`) implements a globally-optimised tile registration step that solves for tile positions jointly across all pairwise overlaps (least-squares / global solver), replacing the current MST-propagated NCC shifts (2026-05-19 — 08_stitch.py stage_register uses multiview_stitcher.registration.register with groupwise_resolution_method="global_optimization")
 - [x] **STITCH-02**: Stitcher uses feather/sigmoidal (or distance-transform-based) blending weights in 3D overlap regions and produces an output that is mathematically equivalent to a globally normalised weighted average — replacing the current 2D cosine-taper accumulator (2026-05-19 — 08_stitch.py stage_blend calls fusion.fuse with fusion_func=fusion.weighted_average_fusion + blending_widths={"z":0,"y":144,"x":144})
 - [x] **STITCH-03**: Per-pair NCC quality scores, residual translation errors, and global-solver convergence diagnostics are written to `stitch_diagnostics.json` for inspection in `08_fusion_dev.ipynb` (2026-05-19 — 08_stitch.py stage_register writes stitch_diagnostics.json with library_version, n_tiles, z_slab_used, voxel_size_um, pairwise [{i,j,quality,shift_um,shift_px,residual_px,accepted}], groupwise {method,converged,rms/max_residual_px,n_variables,n_constraints,solver_iterations} — RESEARCH-defined schema)
-- [ ] **STITCH-04**: `08_fusion_dev.ipynb` is extended with a `Phase 2.5` cell that renders the new diagnostics — per-pair residual heatmap, mid-Z seam-quality (NCC ≥ 0.85 target), per-tile illumination uniformity (max/min ≤ 1.15 target)
+- [x] **STITCH-04**: `08_fusion_dev.ipynb` is extended with a `Phase 2.5` cell that renders the new diagnostics — per-pair residual heatmap, mid-Z seam-quality (NCC ≥ 0.85 target), per-tile illumination uniformity (max/min ≤ 1.15 target) (2026-05-19 — cell appended at index 9; loads stitch_diagnostics.json + stitch_positions.json from OUT_DIR; reads OUT_ZARR for illumination crop)
 - [ ] **STITCH-05**: SLURM workflow runs the new stitcher at full scale on KL018 — either by extending the existing Stage 1/Stage 2 scripts or via a clean `07_stitch_stage1_register.sh` + `07_stitch_stage2_blend.sh` pair — and produces `fused_direct.zarr` with shape `(1, 2, 1557, H, W)` and no visible mid-volume seams
 - [ ] **STITCH-06**: Dual-side illumination fusion code (`fuse_sides`, `_gaussian_ramp`, `read_tile_zchunk`) is untouched by this phase — `git diff` for the phase MUST NOT modify those functions
 - [x] **STITCH-07**: A `.planning/phases/02.5-zarrstitcher-rework/02.5-RESEARCH.md` documents which existing tool was used (PetaKit5D MATLAB direct, Python re-implementation of the same algorithm, or alternative such as BigStitcher/m-stitch) and why, with citations to Ruan et al. *Nature Methods* 2024 and the PetaKit5D source (2026-05-19 — multiview-stitcher 0.1.52 chosen; env installed at /vast/scratch/users/kriel.j/mvstitch_env)
@@ -69,7 +69,7 @@
 | STITCH-01 | Phase 2.5: ZarrStitcher Stitching Rework | Done (2026-05-19) |
 | STITCH-02 | Phase 2.5: ZarrStitcher Stitching Rework | Done (2026-05-19) |
 | STITCH-03 | Phase 2.5: ZarrStitcher Stitching Rework | Done (2026-05-19) |
-| STITCH-04 | Phase 2.5: ZarrStitcher Stitching Rework | Pending |
+| STITCH-04 | Phase 2.5: ZarrStitcher Stitching Rework | Done (2026-05-19) |
 | STITCH-05 | Phase 2.5: ZarrStitcher Stitching Rework | Pending |
 | STITCH-06 | Phase 2.5: ZarrStitcher Stitching Rework | Pending |
 | STITCH-07 | Phase 2.5: ZarrStitcher Stitching Rework | Done (2026-05-19) |

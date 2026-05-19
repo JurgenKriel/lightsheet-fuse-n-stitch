@@ -69,7 +69,7 @@ Plans:
 - [x] 02.5-02-PLAN.md — 08_stitch.py Stage 1 register: global LSQ + stitch_positions.json + stitch_diagnostics.json (STITCH-01, 03, 06, 07) (2026-05-19)
 - [x] 02.5-03-PLAN.md — 08_stitch.py Stage 2 blend: weighted_average_fusion + blending_widths, r+ zarr writes at absolute Z indices (STITCH-02, 05, 06) (2026-05-19)
 - [ ] 02.5-04-PLAN.md — 08_stitch_stage1_register.sh + 08_stitch_stage2_blend.sh SLURM scripts (STITCH-05)
-- [ ] 02.5-05-PLAN.md — 08_fusion_dev.ipynb Phase 2.5 diagnostics cell: residual heatmap, NCC ≥ 0.85, illumination ≤ 1.15 (STITCH-04)
+- [x] 02.5-05-PLAN.md — 08_fusion_dev.ipynb Phase 2.5 diagnostics cell: residual heatmap, NCC ≥ 0.85, illumination ≤ 1.15 (STITCH-04) (2026-05-19)
 
 ### Phase 3: OME-TIFF Export
 **Goal**: Stitched zarr is exported as a pyramidal OME-TIFF that opens correctly in QuPath, ImageJ, and Napari with accurate pixel-size metadata
@@ -87,5 +87,5 @@ Plans:
 |-------|----------------|--------|-----------|
 | 1. Substack & Notebook | 2/3 | In progress | - |
 | 2. Full-Stack Fusion | 3/3 | Complete | 2026-05-18 |
-| 2.5. ZarrStitcher Stitching Rework | 3/5 | In progress | - |
+| 2.5. ZarrStitcher Stitching Rework | 4/5 | In progress | - |
 | 3. OME-TIFF Export | 0/TBD | Not started | - |

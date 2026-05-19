@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-05-18)
 
 **Core value:** A single pyramidal OME-TIFF of the KL018 brain volume with no visible fusion artifacts — usable in QuPath, Napari, Imaris, and ImageJ without further processing
-**Current focus:** Phase 2 complete — ready for Phase 3 (OME-TIFF Export)
+**Current focus:** Phase 2.5 (ZarrStitcher rework) in progress — plan 01 (env) complete, plan 02 next
 
 ## Current Position
 
-Phase: 2 of 3 (Full-Stack Fusion) — COMPLETE
-Plan: 3 of 3 in current phase
-Status: Verification pending → Phase 3 ready
-Last activity: 2026-05-18 — Phase 2 execution complete (02-01, 02-02, 02-03)
+Phase: 2.5 of 3 (ZarrStitcher Rework) — IN PROGRESS
+Plan: 1 of 5 complete
+Status: mvstitch_env provisioned; spawning plan 02 (08_stitch.py Stage 1)
+Last activity: 2026-05-19 — plan 02.5-01 complete (mvstitch_env at /vast/scratch/users/kriel.j/mvstitch_env)
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██░░░░░░░░] 20%
 
 ## Performance Metrics
 

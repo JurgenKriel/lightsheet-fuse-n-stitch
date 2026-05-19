@@ -21,6 +21,16 @@
 - [ ] **FULLSTACK-01**: `07_direct_fuse.sh` is updated to use validated parameters from notebook
 - [ ] **FULLSTACK-02**: Full 1557-plane run completes successfully on SLURM and produces `fused_direct.zarr` with shape `(1, 2, 1557, H, W)`
 
+### Stitching Rework (Phase 2.5)
+
+- [ ] **STITCH-01**: A new module `08_stitch.py` (or refactored region inside `07_direct_fuse.py`) implements a globally-optimised tile registration step that solves for tile positions jointly across all pairwise overlaps (least-squares / global solver), replacing the current MST-propagated NCC shifts
+- [ ] **STITCH-02**: Stitcher uses feather/sigmoidal (or distance-transform-based) blending weights in 3D overlap regions and produces an output that is mathematically equivalent to a globally normalised weighted average — replacing the current 2D cosine-taper accumulator
+- [ ] **STITCH-03**: Per-pair NCC quality scores, residual translation errors, and global-solver convergence diagnostics are written to `stitch_diagnostics.json` for inspection in `08_fusion_dev.ipynb`
+- [ ] **STITCH-04**: `08_fusion_dev.ipynb` is extended with a `Phase 2.5` cell that renders the new diagnostics — per-pair residual heatmap, mid-Z seam-quality (NCC ≥ 0.85 target), per-tile illumination uniformity (max/min ≤ 1.15 target)
+- [ ] **STITCH-05**: SLURM workflow runs the new stitcher at full scale on KL018 — either by extending the existing Stage 1/Stage 2 scripts or via a clean `07_stitch_stage1_register.sh` + `07_stitch_stage2_blend.sh` pair — and produces `fused_direct.zarr` with shape `(1, 2, 1557, H, W)` and no visible mid-volume seams
+- [ ] **STITCH-06**: Dual-side illumination fusion code (`fuse_sides`, `_gaussian_ramp`, `read_tile_zchunk`) is untouched by this phase — `git diff` for the phase MUST NOT modify those functions
+- [x] **STITCH-07**: A `.planning/phases/02.5-zarrstitcher-rework/02.5-RESEARCH.md` documents which existing tool was used (PetaKit5D MATLAB direct, Python re-implementation of the same algorithm, or alternative such as BigStitcher/m-stitch) and why, with citations to Ruan et al. *Nature Methods* 2024 and the PetaKit5D source (2026-05-19 — multiview-stitcher 0.1.52 chosen; env installed at /vast/scratch/users/kriel.j/mvstitch_env)
+
 ### OME-TIFF Export
 
 - [ ] **EXPORT-01**: `08_export_ometiff.py` converts the stitched zarr to a pyramidal OME-TIFF (BigTIFF, ≥3 resolution levels, uint16)
@@ -56,8 +66,15 @@
 | NOTEBOOK-06 | Phase 1: Substack & Notebook | Pending |
 | FULLSTACK-01 | Phase 2: Full-Stack Fusion | Pending |
 | FULLSTACK-02 | Phase 2: Full-Stack Fusion | Pending |
+| STITCH-01 | Phase 2.5: ZarrStitcher Stitching Rework | Pending |
+| STITCH-02 | Phase 2.5: ZarrStitcher Stitching Rework | Pending |
+| STITCH-03 | Phase 2.5: ZarrStitcher Stitching Rework | Pending |
+| STITCH-04 | Phase 2.5: ZarrStitcher Stitching Rework | Pending |
+| STITCH-05 | Phase 2.5: ZarrStitcher Stitching Rework | Pending |
+| STITCH-06 | Phase 2.5: ZarrStitcher Stitching Rework | Pending |
+| STITCH-07 | Phase 2.5: ZarrStitcher Stitching Rework | Done (2026-05-19) |
 | EXPORT-01 | Phase 3: OME-TIFF Export | Pending |
 | EXPORT-02 | Phase 3: OME-TIFF Export | Pending |
 | EXPORT-03 | Phase 3: OME-TIFF Export | Pending |
 
-**Coverage: 13/13 v1 requirements mapped. No orphans.**
+**Coverage: 20/20 v1 requirements mapped. No orphans.**

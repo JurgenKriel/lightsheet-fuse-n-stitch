@@ -13,6 +13,7 @@ with correct metadata and verifies viewer compatibility.
 
 - [ ] **Phase 1: Substack & Notebook** - Add `--z-start`/`--z-end` to `07_direct_fuse.py` and build `08_fusion_dev.ipynb` for interactive parameter tuning
 - [ ] **Phase 2: Full-Stack Fusion** - Run validated parameters on the complete 1557-plane KL018 dataset via SLURM
+- [ ] **Phase 2.5: ZarrStitcher Stitching Rework** - Replace ad-hoc NCC+MST + cosine-taper stitching with a PetaKit5D-ZarrStitcher-equivalent globally-optimised stitcher to eliminate residual tile seams (keeps current dual-side fusion as-is)
 - [ ] **Phase 3: OME-TIFF Export** - Convert fused zarr to pyramidal OME-TIFF with correct metadata and verify viewer compatibility
 
 ## Phase Details
@@ -49,9 +50,30 @@ Plans:
 - [x] 02-02-PLAN.md — Create 07_direct_fuse_stage1_ncc.sh and 07_direct_fuse_stage2_parallel.sh (8-task array) (2026-05-18)
 - [x] 02-03-PLAN.md — Update 07_direct_fuse.sh with validated params, workers=12, parallel workflow reference (2026-05-18)
 
+### Phase 2.5: ZarrStitcher Stitching Rework
+**Goal**: After Phase 2 ran end-to-end, mid-volume Z-planes still show visible tile seams. Replace the ad-hoc stitcher (NCC + MST + cosine-taper accumulator in `07_direct_fuse.py`) with a globally-optimised stitcher modelled on PetaKit5D `ZarrStitcher` (Ruan et al., *Nature Methods* 2024) so seams are eliminated while keeping the validated dual-side fusion (`fuse_sides`) untouched. The stitcher must read fused per-tile Z-slabs and write a single seamless `fused_direct.zarr`.
+**Depends on**: Phase 2
+**Requirements**: STITCH-01, STITCH-02, STITCH-03, STITCH-04, STITCH-05, STITCH-06, STITCH-07
+**Success Criteria** (what must be TRUE):
+  1. Stitcher uses a globally-consistent registration (least-squares / global optimisation over a pairwise constraint graph), not a single-spanning-tree propagation, so per-tile residual translation errors are minimised across the whole canvas
+  2. Blending uses feather/sigmoidal (or equivalent globally-normalised) weights in 3D overlap regions, not 2D cosine-taper accumulation, eliminating accumulated brightness ramps at multi-tile junctions
+  3. A mid-volume Z-plane (Z=778) at the 8×4 (or full) tile junction shows no visible seam in fused_direct.zarr — measured by `08_fusion_dev.ipynb` seam-heatmap NCC ≥ 0.85 at all neighbour pairs
+  4. Per-tile illumination-uniformity plot from `08_fusion_dev.ipynb` shows max-min intensity ratio ≤ 1.15 across each tile (no edge ramps inherited from blending weights)
+  5. Stitched output preserves voxel size, dimension order TCZYX, and shape `(1, 2, 1557, H, W)` consistent with downstream Phase 3 OME-TIFF export
+  6. Dual-side fusion code path (`fuse_sides`, `_gaussian_ramp`) is unchanged — phase only replaces stitching code (position refinement + canvas accumulation + write)
+  7. Existing SLURM two-stage workflow (Stage 1 NCC, Stage 2 parallel slab-write) still works for the new stitcher or is replaced by an explicitly-defined two-stage equivalent
+**Plans**: 5 plans
+
+Plans:
+- [x] 02.5-01-PLAN.md — Create mvstitch_env conda env + environment_mvstitch.yml (STITCH-07) (2026-05-19)
+- [ ] 02.5-02-PLAN.md — 08_stitch.py Stage 1 register: global LSQ + stitch_positions.json + stitch_diagnostics.json (STITCH-01, 03, 06, 07)
+- [ ] 02.5-03-PLAN.md — 08_stitch.py Stage 2 blend: weighted_average_fusion + blending_widths, r+ zarr writes at absolute Z indices (STITCH-02, 05, 06)
+- [ ] 02.5-04-PLAN.md — 08_stitch_stage1_register.sh + 08_stitch_stage2_blend.sh SLURM scripts (STITCH-05)
+- [ ] 02.5-05-PLAN.md — 08_fusion_dev.ipynb Phase 2.5 diagnostics cell: residual heatmap, NCC ≥ 0.85, illumination ≤ 1.15 (STITCH-04)
+
 ### Phase 3: OME-TIFF Export
 **Goal**: Stitched zarr is exported as a pyramidal OME-TIFF that opens correctly in QuPath, ImageJ, and Napari with accurate pixel-size metadata
-**Depends on**: Phase 2
+**Depends on**: Phase 2.5
 **Requirements**: EXPORT-01, EXPORT-02, EXPORT-03
 **Success Criteria** (what must be TRUE):
   1. `08_export_ometiff.py` produces a BigTIFF file with at least 3 pyramid resolution levels and uint16 pixel type
@@ -65,4 +87,5 @@ Plans:
 |-------|----------------|--------|-----------|
 | 1. Substack & Notebook | 2/3 | In progress | - |
 | 2. Full-Stack Fusion | 3/3 | Complete | 2026-05-18 |
+| 2.5. ZarrStitcher Stitching Rework | 1/5 | In progress | - |
 | 3. OME-TIFF Export | 0/TBD | Not started | - |

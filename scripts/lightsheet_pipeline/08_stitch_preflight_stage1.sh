@@ -4,7 +4,7 @@
 #SBATCH --gres=gpu:A30:1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=80G
-#SBATCH --time=00:45:00
+#SBATCH --time=02:00:00
 #SBATCH --output=/vast/scratch/users/kriel.j/output.preflight_reg.%j.%N.log
 #SBATCH --error=/vast/scratch/users/kriel.j/output.preflight_reg.%j.%N.log
 
@@ -41,6 +41,12 @@ module load CUDA/12.1
 source /stornext/System/data/apps/anaconda3/anaconda3-latest/etc/profile.d/conda.sh
 conda activate "$ENV_DIR"
 
+# Force unbuffered Python stdout so progress prints land in the SLURM log in
+# real time — the prior pre-flight (job 27841408) printed nothing past env
+# activation because stdout was buffered and the 45-min time-limit kill
+# discarded the buffer before flush.
+export PYTHONUNBUFFERED=1
+
 echo "=== Pre-flight Stage 1: global registration (substack scope) ==="
 echo "SLURM job:    ${SLURM_JOB_ID:-interactive}  Node: ${SLURMD_NODENAME:-local}"
 echo "Pre-flight out dir: $PREFLIGHT"
@@ -50,7 +56,7 @@ python -c "import multiview_stitcher, dask; print('multiview-stitcher', multivie
 # --out-zarr is required by argparse but stage_register doesn't open/write to it.
 # Point it at a placeholder path under preflight so any future stage_register
 # code change that DOES touch it cannot reach the production zarr.
-python "$SCRIPT_DIR/08_stitch.py" \
+python -u "$SCRIPT_DIR/08_stitch.py" \
     --stage register \
     --czi "$CZI_PATH" \
     --out-dir "$PREFLIGHT" \

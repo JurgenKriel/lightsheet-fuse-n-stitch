@@ -2,9 +2,9 @@
 #SBATCH --job-name=ls_stitch_preflight_blend
 #SBATCH --partition=gpuq
 #SBATCH --gres=gpu:A30:1
-#SBATCH --cpus-per-task=6
+#SBATCH --cpus-per-task=32
 #SBATCH --mem=150G
-#SBATCH --time=00:45:00
+#SBATCH --time=03:00:00
 #SBATCH --output=/vast/scratch/users/kriel.j/output.preflight_blend.%j.%N.log
 #SBATCH --error=/vast/scratch/users/kriel.j/output.preflight_blend.%j.%N.log
 
@@ -35,6 +35,7 @@ SCRIPT_DIR="/vast/projects/BCRL_Multi_Omics/scripts/lightsheet_pipeline"
 ENV_DIR="/vast/scratch/users/kriel.j/mvstitch_env"
 
 export CUDA_VISIBLE_DEVICES=0
+export PYTHONUNBUFFERED=1   # mirror preflight Stage 1 — see Stage 1 debug session
 
 if ! command -v module &>/dev/null; then
     source /etc/profile.d/modules.sh
@@ -152,7 +153,8 @@ python "$SCRIPT_DIR/08_stitch.py" \
     --out-zarr "$SUBSTACK_ZARR" \
     --z-start 728 \
     --z-end   828 \
-    --z-chunk 64
+    --z-chunk 64 \
+    --workers 24
 
 echo "=== Pre-flight Stage 2 done ==="
 echo "Inspect in 08_fusion_dev.ipynb Phase 2.5 cell — set OUT_DIR=$PREFLIGHT, OUT_ZARR=$SUBSTACK_ZARR"

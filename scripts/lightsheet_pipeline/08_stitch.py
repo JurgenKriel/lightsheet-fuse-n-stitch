@@ -677,13 +677,18 @@ def stage_blend(args: argparse.Namespace, czi: CziFile, layout: dict) -> None:
                             f"stitch_positions.json missing tile {m}; "
                             "Stage 1 output is incomplete."
                         )
-                    # translation_um in stitch_positions.json is the absolute
-                    # canvas-world placement (stage + correction). We assign
-                    # it directly as the 'registered' transform_key on the sim;
-                    # fusion.fuse(transform_key='registered', ...) then places
-                    # tiles at these absolute coords.
+                    # The sim's intrinsic origin (set in build_tile_sims via
+                    # `translation={..., y: ty*sy, x: tx*sx}`) already encodes
+                    # the stage offset. mvstitch's fusion.fuse(transform_key=
+                    # "registered", ...) composes the registered transform ON
+                    # TOP of that origin. So `registered` must be the
+                    # CORRECTION ONLY (delta) -- writing the absolute placement
+                    # here double-counts the stage offset and inflates the
+                    # canvas by ~2x. correction_um is exactly the per-tile
+                    # delta returned by Stage 1's mvstitch register() call.
                     _apply_registered_transform(
-                        sim, positions[key]["translation_um"]
+                        sim, positions[key].get("correction_um")
+                              or {"z": 0.0, "y": 0.0, "x": 0.0}
                     )
 
                 # Fuse with feather/blending widths in N-D (STITCH-02)

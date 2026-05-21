@@ -27,6 +27,11 @@ Usage
       --out-dir /vast/scratch/users/kriel.j/KL018_lightsheet \\
       --out-zarr /vast/scratch/users/kriel.j/KL018_lightsheet/fused_direct.zarr
 
+  # Stage 1 preflight (fast: 32-plane slab, no z-binning, axis-aligned neighbors only):
+  python 08_stitch.py --stage register \\
+      --czi <czi> --out-dir <preflight_dir> --out-zarr <placeholder> \\
+      --z-slab-half 16 --reg-z-bin 1
+
   # Stage 2 (SLURM array — see plan 02.5-03 + 02.5-04):
   python 08_stitch.py --stage blend \\
       --czi <czi> --out-dir <dir> --out-zarr <zarr> \\
@@ -134,6 +139,18 @@ def build_tile_sims(
 # Helpers for serialising xarray transform results to plain JSON.
 # ---------------------------------------------------------------------------
 
+def _scalar(v: Any, default: float = 0.0) -> float:
+    """Coerce xarray DataArray / numpy scalar / plain value to a Python float."""
+    if v is None:
+        return default
+    if hasattr(v, "values"):  # xarray DataArray
+        v = v.values
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
 def _extract_translation_um(param_xarray: Any) -> dict:
     """
     multiview-stitcher returns the per-tile transform as an xarray.DataArray
@@ -141,6 +158,9 @@ def _extract_translation_um(param_xarray: Any) -> dict:
     translation in physical units (µm).
     """
     arr = np.asarray(param_xarray)
+    # multiview-stitcher 0.1.52 wraps the affine in a leading time dim → (1, 4, 4)
+    if arr.ndim == 3 and arr.shape[0] == 1:
+        arr = arr[0]
     if arr.ndim != 2 or arr.shape[0] < 3 or arr.shape[1] < arr.shape[0]:
         raise ValueError(f"Unexpected param shape: {arr.shape}")
     # affine 4x4 or 3x3 — last column row 0..N-2 is the translation
@@ -161,49 +181,91 @@ def _to_pixels(t_um: dict, layout: dict) -> dict:
     }
 
 
-def _flatten_pairwise(pairwise: Any, layout: dict) -> list[dict]:
+def _stage_translation_um(layout: dict, m: int) -> dict:
     """
-    Convert multiview-stitcher pairwise_registration_results into a flat list
+    Return the canvas-absolute stage translation for tile m, in µm.
+    Mirrors the {z:0, y:bb.y*sy, x:bb.x*sx} convention used in build_tile_sims.
+    """
+    vs = layout["voxel_size_um"]
+    sx, sy = float(vs["x"]), float(vs["y"])
+    bb = layout["tile_bboxes"][m]
+    return {"z": 0.0, "y": float(bb.y) * sy, "x": float(bb.x) * sx}
+
+
+def _flatten_pairwise(g_reg_computed: Any, layout: dict) -> list[dict]:
+    """
+    Convert multiview-stitcher's pairwise registration graph into a flat list
     of dicts matching the diagnostics JSON schema.
-    The exact return shape from registration.register depends on lib version;
-    we handle both list-of-dicts and dict-of-dicts shapes defensively.
+
+    The networkx edge attributes set by mvstitch (registration.py:1449-1452) are:
+      - "transform"  : xr.DataArray, affine in physical (µm) coords
+      - "quality"    : xr.DataArray, scalar NCC-like score
+      - "bbox"       : xr.DataArray, overlap-region corners in physical coords
+    Older versions used "shift" / "translation" keys — we handle both for
+    backwards compatibility, but the 0.1.52 path is the canonical case.
     """
     out: list[dict] = []
-    items = pairwise.items() if isinstance(pairwise, dict) else enumerate(pairwise)
-    for _, edge in items:
-        # edge is a dict-like with keys: pair, quality, shift, success, ...
-        if isinstance(edge, dict):
-            i_j = edge.get("pair") or edge.get("indices") or (
-                edge.get("i"), edge.get("j"),
-            )
-            quality = float(edge.get("quality", edge.get("ncc", 0.0)) or 0.0)
-            shift = edge.get("shift") or edge.get("translation") or {}
-            accepted = bool(edge.get("accepted", edge.get("success", True)))
-            residual = float(edge.get("residual_px", 0.0) or 0.0)
-        else:
-            # tuple/object — fall back to attribute access
-            i_j = getattr(edge, "pair", (None, None))
-            quality = float(getattr(edge, "quality", 0.0))
-            shift = getattr(edge, "shift", {})
-            accepted = bool(getattr(edge, "accepted", True))
-            residual = float(getattr(edge, "residual_px", 0.0))
+
+    # Accept either a networkx graph (mvstitch 0.1.52) or a pre-built list/dict
+    # of edges. Convert to a uniform list of (i, j, attrs) tuples.
+    edges_iter = None
+    if hasattr(g_reg_computed, "edges"):
         try:
-            i_val, j_val = int(i_j[0]), int(i_j[1])
+            edges_iter = [
+                (i, j, data) for i, j, data in g_reg_computed.edges(data=True)
+            ]
+        except TypeError:
+            edges_iter = None
+    if edges_iter is None:
+        if isinstance(g_reg_computed, dict):
+            edges_iter = [(d.get("i"), d.get("j"), d)
+                          for d in g_reg_computed.values()]
+        elif isinstance(g_reg_computed, list):
+            edges_iter = [(d.get("i"), d.get("j"), d)
+                          for d in g_reg_computed if isinstance(d, dict)]
+        else:
+            edges_iter = []
+
+    for i_raw, j_raw, attrs in edges_iter:
+        try:
+            i_val = int(attrs.get("i", i_raw))
+            j_val = int(attrs.get("j", j_raw))
         except (TypeError, ValueError):
             continue
-        # Coerce shift to dict of floats; treat as µm if keys present
-        if isinstance(shift, dict):
-            shift_um = {k: float(v) for k, v in shift.items()
-                        if k in ("z", "y", "x")}
-        else:
+
+        quality = _scalar(attrs.get("quality"))
+
+        # Extract shift in µm. Preferred source: the "transform" affine. Fall
+        # back to legacy "shift" / "translation" keys if present.
+        transform_xf = attrs.get("transform")
+        if transform_xf is not None:
             try:
-                arr = np.asarray(shift).ravel()
-                shift_um = {"z": float(arr[0]), "y": float(arr[1]), "x": float(arr[2])}
-            except Exception:
+                shift_um = _extract_translation_um(transform_xf)
+            except (ValueError, TypeError):
                 shift_um = {"z": 0.0, "y": 0.0, "x": 0.0}
-        shift_px = _to_pixels(
-            {**{"z": 0.0, "y": 0.0, "x": 0.0}, **shift_um}, layout,
-        )
+        else:
+            shift_legacy = attrs.get("shift") or attrs.get("translation") or {}
+            if isinstance(shift_legacy, dict):
+                shift_um = {
+                    "z": _scalar(shift_legacy.get("z")),
+                    "y": _scalar(shift_legacy.get("y")),
+                    "x": _scalar(shift_legacy.get("x")),
+                }
+            else:
+                try:
+                    arr = np.asarray(shift_legacy).ravel()
+                    shift_um = {
+                        "z": float(arr[0]),
+                        "y": float(arr[1]),
+                        "x": float(arr[2]),
+                    }
+                except Exception:
+                    shift_um = {"z": 0.0, "y": 0.0, "x": 0.0}
+
+        shift_px = _to_pixels(shift_um, layout)
+        accepted = bool(attrs.get("accepted", attrs.get("success", True)))
+        residual = _scalar(attrs.get("residual_px"))
+
         out.append({
             "i": i_val, "j": j_val,
             "quality": quality,
@@ -216,17 +278,69 @@ def _flatten_pairwise(pairwise: Any, layout: dict) -> list[dict]:
 
 
 def _flatten_groupwise(groupwise: Any) -> dict:
-    """Coerce groupwise_resolution_info into a fixed-schema dict."""
+    """Coerce groupwise_resolution_info into a fixed-schema dict.
+
+    multiview-stitcher 0.1.52 returns:
+      {
+        "metrics": pd.DataFrame[mean_residual, max_residual, iteration, ...] | None,
+        "edge_residuals": {it_index: {edge_tuple: np.ndarray, ...}, ...},
+        "used_edges": {it_index: [edge_tuple, ...], ...}    # ← keyed by timepoint
+      }
+    Older or user-supplied dicts may carry flat keys (converged, rms_residual_px, …).
+    We handle both shapes so the gate-check numbers are always real.
+    """
     if not isinstance(groupwise, dict):
         groupwise = getattr(groupwise, "__dict__", {})
+
+    # ── flat schema (user-supplied or legacy) ──────────────────────────────
+    if "converged" in groupwise:
+        return {
+            "method": str(groupwise.get("method", "global_optimization")),
+            "converged": bool(groupwise["converged"]),
+            "rms_residual_px": float(groupwise.get("rms_residual_px", 0.0) or 0.0),
+            "max_residual_px": float(groupwise.get("max_residual_px", 0.0) or 0.0),
+            "n_variables": int(groupwise.get("n_variables", 0) or 0),
+            "n_constraints": int(groupwise.get("n_constraints", 0) or 0),
+            "solver_iterations": int(groupwise.get("solver_iterations", 0) or 0),
+        }
+
+    # ── library shape: {"metrics": DataFrame-or-None, "used_edges": {...}} ─
+    df = groupwise.get("metrics")
+    rms_residual = 0.0
+    max_residual = 0.0
+    n_iters = 0
+    converged = True  # identity-transform fallback (empty graph) is "converged"
+    if df is not None and hasattr(df, "iloc") and len(df) > 0:
+        last = df.iloc[-1]
+        rms_residual = float(last["mean_residual"]) if "mean_residual" in df.columns else 0.0
+        max_residual = float(last["max_residual"]) if "max_residual" in df.columns else 0.0
+        n_iters = len(df)
+        converged = True  # optimiser ran to completion (abs_tol met or edge exhausted)
+
+    # used_edges is dict-keyed-by-timepoint-index of lists of edge tuples.
+    # Total constraints = union of edges across timepoints. For a single-T
+    # registration this equals the number of pairwise edges that survived
+    # the global solver's outer loop.
+    used_edges_raw = groupwise.get("used_edges", {})
+    if isinstance(used_edges_raw, dict):
+        n_constraints = len({
+            tuple(sorted(e))
+            for edges in used_edges_raw.values()
+            for e in (edges if isinstance(edges, (list, tuple, set)) else [])
+        })
+    elif isinstance(used_edges_raw, (list, tuple, set)):
+        n_constraints = len(used_edges_raw)
+    else:
+        n_constraints = 0
+
     return {
-        "method": str(groupwise.get("method", "global_optimization")),
-        "converged": bool(groupwise.get("converged", True)),
-        "rms_residual_px": float(groupwise.get("rms_residual_px", 0.0) or 0.0),
-        "max_residual_px": float(groupwise.get("max_residual_px", 0.0) or 0.0),
-        "n_variables": int(groupwise.get("n_variables", 0) or 0),
-        "n_constraints": int(groupwise.get("n_constraints", 0) or 0),
-        "solver_iterations": int(groupwise.get("solver_iterations", 0) or 0),
+        "method": "global_optimization",
+        "converged": converged,
+        "rms_residual_px": rms_residual,
+        "max_residual_px": max_residual,
+        "n_variables": 0,
+        "n_constraints": n_constraints,
+        "solver_iterations": n_iters,
     }
 
 
@@ -301,8 +415,21 @@ def stage_register(args: argparse.Namespace, czi: CziFile, layout: dict) -> None
     )
     msims = [msi_utils.get_msim_from_sim(s) for s in sims]
 
-    print("[Stage 1] Calling multiview_stitcher.registration.register("
-          "groupwise_resolution_method='global_optimization')...")
+    # Build registration_binning dict — None means no binning (production default).
+    # Preflight may pass --reg-z-bin 2 to halve the per-pair Z cost without
+    # affecting XY translation accuracy (stitching only needs XY shifts).
+    reg_binning = None
+    if args.reg_z_bin > 1:
+        reg_binning = {"z": int(args.reg_z_bin)}
+
+    pruning_method = args.pre_reg_pruning_method  # default: keep_axis_aligned
+
+    print(
+        f"[Stage 1] Calling multiview_stitcher.registration.register("
+        f"groupwise_resolution_method='global_optimization', "
+        f"pre_registration_pruning_method='{pruning_method}', "
+        f"registration_binning={reg_binning})..."
+    )
     params = registration.register(
         msims,
         reg_channel_index=0,
@@ -310,6 +437,8 @@ def stage_register(args: argparse.Namespace, czi: CziFile, layout: dict) -> None
         new_transform_key="registered",
         pairwise_reg_func=registration.phase_correlation_registration,
         groupwise_resolution_method="global_optimization",
+        pre_registration_pruning_method=pruning_method,
+        registration_binning=reg_binning,
         post_registration_do_quality_filter=True,
         post_registration_quality_threshold=args.quality_threshold,
         return_dict=True,
@@ -319,32 +448,103 @@ def stage_register(args: argparse.Namespace, czi: CziFile, layout: dict) -> None
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # Compose canvas-absolute world positions explicitly.
+    # ----------------------------------------------------
+    # In multiview-stitcher 0.1.52, registration.register() returns a dict with:
+    #   "params" : list of per-view raw correction affines (one per tile, in
+    #              the order of sorted(g.nodes())). The global_optimization
+    #              solver anchors the reference tile to identity; other tiles
+    #              get a small correction translation. These corrections are
+    #              what we want to add on top of the stage-metadata grid.
+    # The library *also* writes a rebased "registered" transform onto each
+    # msim via set_affine_transform(..., base_transform_key='stage_metadata').
+    # In theory that rebased transform equals stage @ correction (absolute world),
+    # but empirically (mvstitch 0.1.52) the values come back as if the global
+    # solver re-anchored the entire frame at the reference tile — making the
+    # rebased "registered" transform unsafe as a canvas-absolute placement.
+    # Instead, we read the raw correction from params["params"] and combine
+    # it with the bbox-derived stage offset (the same value we passed into
+    # build_tile_sims), producing an unambiguous absolute_um for each tile.
+    raw_params = params.get("params") or []
+    if not isinstance(raw_params, (list, tuple)) or len(raw_params) != layout["n_tiles"]:
+        raise RuntimeError(
+            f"[Stage 1] Expected params['params'] to be a list of "
+            f"{layout['n_tiles']} per-view affines; got {type(raw_params).__name__} "
+            f"of length {len(raw_params) if hasattr(raw_params, '__len__') else '?'}."
+        )
+
     positions: dict[str, dict] = {}
-    for m, p in params["params"].items():
-        t_um = _extract_translation_um(p)
-        positions[str(m)] = {
-            "translation_um": t_um,
-            "translation_px": _to_pixels(t_um, layout),
+    abs_x_px: list[float] = []
+    abs_y_px: list[float] = []
+    for m in range(layout["n_tiles"]):
+        stage_um = _stage_translation_um(layout, m)
+        correction_um = _extract_translation_um(raw_params[m])
+        absolute_um = {
+            "z": stage_um["z"] + correction_um["z"],
+            "y": stage_um["y"] + correction_um["y"],
+            "x": stage_um["x"] + correction_um["x"],
         }
+        absolute_px = _to_pixels(absolute_um, layout)
+        positions[str(m)] = {
+            "translation_um": absolute_um,
+            "translation_px": absolute_px,
+            # Keep the components for traceability / debugging
+            "stage_um": stage_um,
+            "stage_px": _to_pixels(stage_um, layout),
+            "correction_um": correction_um,
+            "correction_px": _to_pixels(correction_um, layout),
+        }
+        abs_x_px.append(absolute_px["x"])
+        abs_y_px.append(absolute_px["y"])
+
     with open(out_dir / "stitch_positions.json", "w") as f:
         json.dump(positions, f, indent=2)
     print(f"[Stage 1] Wrote stitch_positions.json ({len(positions)} tiles)")
 
+    # One-line canvas summary — easy visual cross-check against layout cache.
+    canvas_h = int(round(max(abs_y_px) - min(abs_y_px) + layout["tile_h"]))
+    canvas_w = int(round(max(abs_x_px) - min(abs_x_px) + layout["tile_w"]))
+    print(
+        f"[Stage 1] Canvas from absolute positions: H={canvas_h} W={canvas_w} "
+        f"(layout cache: H={layout['canvas_h']} W={layout['canvas_w']})"
+    )
+    # Sanity check — registration corrections are nominally a few pixels; if
+    # the absolute canvas differs from the layout canvas by more than half a
+    # tile (1920 px / 2 ≈ 1000 px) something has gone badly wrong.
+    if abs(canvas_h - layout["canvas_h"]) > 1000 or abs(canvas_w - layout["canvas_w"]) > 1000:
+        print(
+            f"[Stage 1] WARNING: canvas extent from registration disagrees with "
+            f"layout cache by >1000 px. Inspect stitch_positions.json corrections.",
+            file=sys.stderr,
+        )
+
     # Persist diagnostics ---------------------------------------------------
-    pairwise_raw = params.get("pairwise_registration_results", [])
-    groupwise_raw = params.get("groupwise_resolution_info", {})
+    # return_dict keys: "pairwise_registration" → {"graph": nx.Graph, ...}
+    #                   "groupwise_resolution"  → {"metrics": dict, ...}
+    g_reg = params.get("pairwise_registration", {}).get("graph")
+    groupwise_raw = params.get("groupwise_resolution", {}).get("metrics", {})
     diagnostics = {
         "library_version": "multiview-stitcher==0.1.52",
         "n_tiles": int(layout["n_tiles"]),
         "z_slab_used": [int(z0), int(z1)],
         "voxel_size_um": {k: float(v) for k, v in layout["voxel_size_um"].items()},
-        "pairwise": _flatten_pairwise(pairwise_raw, layout),
+        "canvas_summary": {
+            "from_registration_px": {"h": canvas_h, "w": canvas_w},
+            "from_layout_cache_px": {
+                "h": int(layout["canvas_h"]),
+                "w": int(layout["canvas_w"]),
+            },
+        },
+        "pairwise": _flatten_pairwise(g_reg, layout) if g_reg is not None else [],
         "groupwise": _flatten_groupwise(groupwise_raw),
     }
     with open(out_dir / "stitch_diagnostics.json", "w") as f:
         json.dump(diagnostics, f, indent=2)
     n_pairs = len(diagnostics["pairwise"])
+    qualities = [p["quality"] for p in diagnostics["pairwise"]]
+    median_q = float(np.median(qualities)) if qualities else 0.0
     print(f"[Stage 1] Wrote stitch_diagnostics.json ({n_pairs} pairs, "
+          f"median_quality={median_q:.3f}, "
           f"converged={diagnostics['groupwise']['converged']}, "
           f"max_residual_px={diagnostics['groupwise']['max_residual_px']:.2f})")
 
@@ -415,6 +615,11 @@ def stage_blend(args: argparse.Namespace, czi: CziFile, layout: dict) -> None:
                             f"stitch_positions.json missing tile {m}; "
                             "Stage 1 output is incomplete."
                         )
+                    # translation_um in stitch_positions.json is the absolute
+                    # canvas-world placement (stage + correction). We assign
+                    # it directly as the 'registered' transform_key on the sim;
+                    # fusion.fuse(transform_key='registered', ...) then places
+                    # tiles at these absolute coords.
                     _apply_registered_transform(
                         sim, positions[key]["translation_um"]
                     )
@@ -477,6 +682,15 @@ def parse_args() -> argparse.Namespace:
                    help="Channel index used for registration (default: 0)")
     p.add_argument("--quality-threshold", type=float, default=0.2,
                    help="post_registration_quality_threshold for register() (default: 0.2)")
+    p.add_argument("--pre-reg-pruning-method", default="keep_axis_aligned",
+                   help="pre_registration_pruning_method passed to registration.register(). "
+                        "Use 'keep_axis_aligned' for regular grid layouts (default). "
+                        "Other options: 'alternating_pattern', 'otsu_threshold_on_overlap', "
+                        "'shortest_paths_overlap_weighted', or 'None' (no pruning).")
+    p.add_argument("--reg-z-bin", type=int, default=1,
+                   help="Z binning factor during phase-correlation registration (default: 1 = no "
+                        "binning). Set to 2 for preflight: halves per-pair cost without affecting "
+                        "XY translation accuracy (stitching only uses XY shifts).")
     # Stage 2 knobs (consumed in plan 02.5-03)
     p.add_argument("--z-start", type=int, default=0)
     p.add_argument("--z-end", type=int, default=None)
@@ -497,6 +711,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    # Allow passing --pre-reg-pruning-method None (string) to disable pruning
+    if hasattr(args, "pre_reg_pruning_method"):
+        if args.pre_reg_pruning_method in ("None", "none", ""):
+            args.pre_reg_pruning_method = None
     czi = CziFile(args.czi)
     cache_path = Path(args.out_dir) / "czi_layout_cache.json"
     layout = get_czi_layout(czi, cache_path=cache_path)

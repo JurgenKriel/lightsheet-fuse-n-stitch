@@ -14,7 +14,7 @@ MANIFEST="${WORK_DIR}/tile_manifest_corrected.json"
 LEGACY_MANIFEST="${WORK_DIR}/tile_manifest.json"
 [ -f "$MANIFEST" ] || MANIFEST="$LEGACY_MANIFEST"
 FUSED_ZARR="${WORK_DIR}/fused_direct.zarr"
-PYRAMID_ZARR="${WORK_DIR}/fused_pyramid.zarr"
+PYRAMID_ZARR="${WORK_DIR}/fused_pyramid_2.zarr"
 OMETIFF_OUT="${WORK_DIR}/KL018_85_D7_CT2AvIII_Overview-Fused-Stitched.ome.tiff"
 DEST_DIR="/stornext/Img/data/prkfs1/m/Microscopy/KylieLuong/Lightsheet/KL018_KL260427"
 
@@ -151,7 +151,7 @@ description = omexml.tostring()
 
 n_planes = T * C * Z
 print(f"  Writing {n_planes} planes to BigTIFF...")
-opts = dict(photometric="minisblack", compression="lzw", compressionargs={"level": 6})
+opts = dict(photometric="minisblack", compression="lzw")
 with tifffile.TiffWriter(dst, bigtiff=True) as tif:
     i = 0
     for t in range(T):

@@ -30,6 +30,7 @@
 #
 # Full-stack flags — VALIDATED 2026-05-18 via 08_fusion_dev.ipynb substack sweep:
 #   --sigma-frac 0.9  --taper-px 288  --ncc-threshold 0.5  --fusion-axis 2
+#   --normalize-tiles  (added 2026-05-18: scales per-tile median to fix striation artifacts)
 #
 # For full-stack runs (recommended): use the 2-stage parallel workflow instead.
 # Stage 1 (NCC + zarr init): sbatch 07_direct_fuse_stage1_ncc.sh
@@ -75,6 +76,7 @@ python "${SCRIPT_DIR}/07_direct_fuse.py" \
     --taper-px           288 \
     --ncc-threshold      0.5 \
     --fusion-axis        2 \
+    --normalize-tiles \
     --z-chunk            64 \
     --workers            12
 echo "Done."

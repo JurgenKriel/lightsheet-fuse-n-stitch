@@ -150,6 +150,13 @@ def parse_args():
         default="w",
         help="Zarr open mode. 'w' creates/truncates (default). 'r+' opens pre-existing zarr for parallel slab writes.",
     )
+    p.add_argument(
+        "--normalize-tiles",
+        dest="normalize_tiles",
+        action="store_true",
+        help="Normalize per-tile intensities to a common median before stitching. "
+             "Recommended when striation artifacts are visible at tile seams.",
+    )
     return p.parse_args()
 
 
@@ -520,6 +527,102 @@ def refine_tile_positions(
 
 
 # ---------------------------------------------------------------------------
+# Per-tile intensity normalization
+# ---------------------------------------------------------------------------
+
+def compute_overlap_norm_scales(
+    czi: CziFile, layout: dict, refined_pos: dict, c: int = 0, t: int = 0
+) -> dict:
+    """
+    Compute per-tile intensity scales by matching mean intensities in tile
+    overlap regions (mid-Z reference plane, illumination I=0).
+
+    Computes pairwise log-ratios of mean intensity in the shared overlap for
+    every adjacent tile pair, then propagates globally consistent corrections
+    via MST + BFS (same graph structure as position refinement). The geometric
+    mean of all scales is normalised to 1 so overall brightness is unchanged.
+    Clamped to [0.5, 2.0].
+
+    This is robust to depth-dependent tissue coverage because tiles are only
+    compared to their neighbours at the same Z reference plane — tiles that
+    are both background at mid-Z give ratio ≈ 1 (no overcorrection).
+    """
+    n = layout["n_tiles"]
+    mid_z = layout["n_z"] // 2
+    print(f"  Reading mid-Z planes for overlap normalization (C={c}, Z={mid_z}) ...")
+    ref_planes = {}
+    for m in range(n):
+        ref_planes[m] = read_plane(czi, M=m, I=0, C=c, T=t, Z=mid_z)
+
+    log_ratios: dict = {}
+    overlap_quality = np.zeros((n, n), dtype=np.float32)
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            pi, pj = refined_pos[i], refined_pos[j]
+            ov_x0 = max(pi["x"], pj["x"])
+            ov_x1 = min(pi["x"] + pi["w"], pj["x"] + pj["w"])
+            ov_y0 = max(pi["y"], pj["y"])
+            ov_y1 = min(pi["y"] + pi["h"], pj["y"] + pj["h"])
+            if ov_x1 - ov_x0 < 16 or ov_y1 - ov_y0 < 16:
+                continue
+
+            crop_i = ref_planes[i][
+                ov_y0 - pi["y"]: ov_y1 - pi["y"],
+                ov_x0 - pi["x"]: ov_x1 - pi["x"],
+            ].astype(np.float32)
+            crop_j = ref_planes[j][
+                ov_y0 - pj["y"]: ov_y1 - pj["y"],
+                ov_x0 - pj["x"]: ov_x1 - pj["x"],
+            ].astype(np.float32)
+
+            mean_i = float(crop_i.mean())
+            mean_j = float(crop_j.mean())
+            if mean_i < 1.0 or mean_j < 1.0:
+                continue
+
+            overlap_quality[i, j] = overlap_quality[j, i] = min(mean_i, mean_j)
+            log_ratios[(i, j)] = math.log(mean_i / mean_j)
+            log_ratios[(j, i)] = -log_ratios[(i, j)]
+
+    if not log_ratios:
+        print("  No valid overlap pairs — normalization disabled.")
+        return {m: 1.0 for m in range(n)}
+
+    nonzero = overlap_quality > 0
+    neg_q = csr_matrix(-overlap_quality * nonzero)
+    mst = minimum_spanning_tree(neg_q).toarray()
+    edges = list(zip(*np.where(mst != 0)))
+
+    log_scales: dict = {0: 0.0}
+    queue = [0]
+    visited = {0}
+    while queue:
+        src = queue.pop(0)
+        for (ei, ej) in edges:
+            nbr = ej if ei == src else (ei if ej == src else None)
+            if nbr is None or nbr in visited:
+                continue
+            log_scales[nbr] = log_scales[src] - log_ratios.get((src, nbr), 0.0)
+            visited.add(nbr)
+            queue.append(nbr)
+
+    for m in range(n):
+        if m not in log_scales:
+            log_scales[m] = 0.0
+
+    # Normalise geometric mean to 1 so global brightness is unchanged
+    mean_log = sum(log_scales[m] for m in range(n)) / n
+    scales = {
+        m: float(np.clip(math.exp(log_scales[m] - mean_log), 0.5, 2.0))
+        for m in range(n)
+    }
+    lo, hi = min(scales.values()), max(scales.values())
+    print(f"  Overlap normalization: scale_range=[{lo:.3f}, {hi:.3f}]  ({len(edges)} MST edges)")
+    return scales
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -608,6 +711,15 @@ def main():
 
     print(f"  Refined canvas: {refined_w}×{refined_h} (was {canvas_w}×{canvas_h})")
 
+    # Per-channel, per-tile normalization scales (overlap-region ratio matching)
+    norm_scales = None
+    if args.normalize_tiles:
+        print("\nComputing per-tile intensity normalization (overlap-region matching)...")
+        norm_scales = {
+            c_i: compute_overlap_norm_scales(czi, layout, refined_pos, c=c_i, t=0)
+            for c_i in range(n_c)
+        }
+
     # Build output zarr — TCZYX
     out_shape = (n_t, n_c, n_z_proc, refined_h, refined_w)
     out_chunk = (1, 1, args.z_chunk, min(512, refined_h), min(512, refined_w))
@@ -648,7 +760,7 @@ def main():
                 w_canvas = np.zeros_like(canvas)
 
                 def _process_tile(m):
-                    """Read, fuse, and return (m, fused_slab) for one tile."""
+                    """Read, fuse, normalise, and return (m, fused_slab) for one tile."""
                     if dual:
                         sa = read_tile_zchunk(
                             czi, m, 0, c, t, z0_abs, z1_abs, tile_h, tile_w, args.workers // 4 + 1
@@ -661,6 +773,12 @@ def main():
                         fused = read_tile_zchunk(
                             czi, m, 0, c, t, z0_abs, z1_abs, tile_h, tile_w, args.workers
                         )
+                    if norm_scales is not None:
+                        scale = norm_scales[c].get(m, 1.0)
+                        if scale != 1.0:
+                            fused = np.clip(
+                                fused.astype(np.float32) * scale, 0, 65535
+                            ).astype(np.uint16)
                     return m, fused
 
                 # Read + fuse tiles in parallel, then place serially (canvas not thread-safe)

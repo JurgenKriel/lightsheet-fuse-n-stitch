@@ -644,7 +644,12 @@ def stage_blend(args: argparse.Namespace, czi: CziFile, layout: dict) -> None:
     n_t = int(layout.get("n_t", 1))
     n_c = int(layout.get("n_c", 2))
     z_chunk = max(1, int(args.z_chunk))
-    blending = {"z": 0, "y": int(args.blend_y), "x": int(args.blend_x)}
+    # mvstitch's weights.get_blending_weights divides edt_support_spacing by
+    # blending_widths[dim] for every spatial dim, so 0 causes ZeroDivisionError.
+    # Tiles in this dataset don't overlap in Z (XY grid only), so any positive
+    # value is geometrically equivalent — clamp to 1 px to keep the math safe.
+    blend_z = max(1, int(args.blend_z))
+    blending = {"z": blend_z, "y": int(args.blend_y), "x": int(args.blend_x)}
     print(f"[Stage 2] Range Z=[{args.z_start}:{args.z_end}) chunk={z_chunk} "
           f"blending_widths={blending}")
     print(f"[Stage 2] Tiles: {layout['n_tiles']} channels: {n_c}")
@@ -756,6 +761,10 @@ def parse_args() -> argparse.Namespace:
                    help="blending_widths Y in pixels (default: 144 ≈ half tile overlap)")
     p.add_argument("--blend-x", type=int, default=144,
                    help="blending_widths X in pixels (default: 144 ≈ half tile overlap)")
+    p.add_argument("--blend-z", type=int, default=1,
+                   help="blending_widths Z in pixels (default: 1; tiles don't overlap "
+                        "in Z so any positive value is geometrically equivalent; "
+                        "must be >0 to avoid ZeroDivisionError in mvstitch weights)")
     # Shared
     p.add_argument("--sigma-frac", type=float, default=0.9,
                    help="fuse_sides Gaussian sigma fraction (validated: 0.9)")

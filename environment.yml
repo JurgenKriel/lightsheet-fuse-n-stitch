@@ -1,0 +1,38 @@
+# Phase 2.5: multiview-stitcher conda env for KL018 ZarrStitcher rework.
+#
+# Why a separate env (not lightsheet_env)?
+#   multiview-stitcher 0.1.52 pins `dask<2025.11.0`.
+#   lightsheet_env ships `dask 2026.3.0` — pip-installing multiview-stitcher
+#   into lightsheet_env would silently downgrade dask and break other scripts.
+#   See 02.5-RESEARCH.md §Common Pitfalls Pitfall 1.
+#
+# Reproduce locally:
+#   source /stornext/System/data/apps/anaconda3/anaconda3-latest/etc/profile.d/conda.sh
+#   conda env create -f environment_mvstitch.yml -p /vast/scratch/users/kriel.j/mvstitch_env
+#
+# Or use the manual recipe in RESEARCH §Standard Stack (Installation block).
+#
+# Versions verified 2026-05-19 via `pip index versions <pkg>`.
+
+name: mvstitch_env
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      # Core stitching stack — pinned exactly per RESEARCH §Standard Stack
+      - multiview-stitcher==0.1.52
+      - spatial-image==1.2.3
+      - multiscale-spatial-image==2.0.3
+      - ngff-zarr>=0.12.2
+      # GPU extra: pulls cupy-cuda12x==14.0.1 (matches lightsheet_env cupy)
+      - multiview-stitcher[gpu-cuda12]==0.1.52
+      # Required to import 07_direct_fuse.py functions (fuse_sides, read_tile_zchunk)
+      # without modifying that file (STITCH-06)
+      - aicspylibczi==3.3.1
+      # Fallback-path deps (Patterns 3 + 4 in RESEARCH); also used by Stage 1 diagnostics math
+      - scipy
+      - scikit-image
+      - zarr
+      - numpy

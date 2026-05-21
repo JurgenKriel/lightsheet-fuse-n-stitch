@@ -704,10 +704,25 @@ def stage_blend(args: argparse.Namespace, czi: CziFile, layout: dict) -> None:
                 arr = np.asarray(fused.compute())
                 arr = np.clip(arr, 0, 65535).astype(np.uint16)
 
-                # Defensive: trim/pad the fused canvas to the zarr H/W if
-                # output_stack_mode='union' produced a slightly different
-                # extent (off-by-one is possible at sub-pixel translations).
+                # Defensive: trim/pad the fused canvas to the chunk's
+                # (nz, H, W). output_stack_mode='union' extends the union
+                # bbox by the per-tile registration shifts -- a few pixels
+                # in Y/X (sub-voxel) and a few planes in Z (the registered
+                # Z corrections were ~0.5-3 planes in the KL018 dataset).
+                # We center-crop in Z (so an even Z shift loses planes
+                # symmetrically at both ends) and trim-or-pad in H/W.
                 H, W = int(out_z.shape[-2]), int(out_z.shape[-1])
+                arr_z = arr.shape[0]
+                if arr_z != nz:
+                    if arr_z >= nz:
+                        z_off = (arr_z - nz) // 2
+                        arr = arr[z_off : z_off + nz]
+                    else:
+                        pad = np.zeros((nz, arr.shape[-2], arr.shape[-1]),
+                                       dtype=np.uint16)
+                        z_off = (nz - arr_z) // 2
+                        pad[z_off : z_off + arr_z] = arr
+                        arr = pad
                 if arr.shape[-2] != H or arr.shape[-1] != W:
                     fitted = np.zeros((nz, H, W), dtype=np.uint16)
                     hh = min(H, arr.shape[-2])

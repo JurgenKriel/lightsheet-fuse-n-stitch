@@ -700,8 +700,15 @@ def stage_blend(args: argparse.Namespace, czi: CziFile, layout: dict) -> None:
                     output_stack_mode="union",
                     output_chunksize={"z": nz, "y": 512, "x": 512},
                 )
-                # Materialise the dask result and clip to uint16 range
+                # Materialise the dask result and clip to uint16 range.
+                # mvstitch's fusion.fuse returns an xarray DataArray with all
+                # the input dims (t, c, z, y, x); when fed a single-channel
+                # single-timepoint sim list, the t and c axes are singleton.
+                # Squeeze them down so the downstream Z/H/W trim logic can
+                # use arr.shape[0] for Z without ambiguity.
                 arr = np.asarray(fused.compute())
+                while arr.ndim > 3 and arr.shape[0] == 1:
+                    arr = arr[0]
                 arr = np.clip(arr, 0, 65535).astype(np.uint16)
 
                 # Defensive: trim/pad the fused canvas to the chunk's

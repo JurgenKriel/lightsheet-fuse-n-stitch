@@ -4,7 +4,7 @@
 #SBATCH --gres=gpu:A30:1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=80G
-#SBATCH --time=01:00:00
+#SBATCH --time=02:00:00
 #SBATCH --output=/vast/scratch/users/kriel.j/output.%j.%N.log
 #SBATCH --error=/vast/scratch/users/kriel.j/output.%j.%N.log
 
@@ -49,6 +49,11 @@ module load CUDA/12.1
 source /stornext/System/data/apps/anaconda3/anaconda3-latest/etc/profile.d/conda.sh
 conda activate "$ENV_DIR"
 
+# Stream stdout so register() progress is visible in the SLURM log as it runs —
+# mirrors preflight Stage 1 (see debug session preflight-stage1-registration-
+# timeout, which spent a 45 min job killed before anyone could see any progress).
+export PYTHONUNBUFFERED=1
+
 echo "=== Stage 1: global registration ==="
 echo "SLURM job:  ${SLURM_JOB_ID:-interactive}  Node: ${SLURMD_NODENAME:-local}"
 echo "Scratch:    $SCRATCH"
@@ -70,6 +75,43 @@ python "$SCRIPT_DIR/08_stitch.py" \
 test -f "$POS_JSON"     || { echo "ERROR: $POS_JSON not produced"; exit 1; }
 test -f "$DIAG_JSON"    || { echo "ERROR: $DIAG_JSON not produced"; exit 1; }
 test -f "$LAYOUT_CACHE" || { echo "ERROR: $LAYOUT_CACHE not produced"; exit 1; }
+
+# Gate check — refuse to recreate the zarr (and refuse to let Stage 2 launch)
+# unless registration actually converged with non-trivial pairwise quality.
+# Mirrors the inline gate in 08_stitch_preflight_stage1.sh — without this, a
+# silent regression (e.g. all-zero quality from the diagnostic-key bug fixed in
+# preflight-stage2-canvas-too-small) would still pass the next test -f and let
+# Stage 2 burn 8 × A30-hours on garbage transforms.
+python3 - <<PYEOF
+import json, statistics, sys
+
+d = json.load(open("$DIAG_JSON"))
+g = d.get("groupwise", {})
+pairs = d.get("pairwise", [])
+qualities = [p.get("quality", 0.0) for p in pairs]
+median_q = statistics.median(qualities) if qualities else 0.0
+
+print(f"  n_tiles:        {d.get('n_tiles')}")
+print(f"  pairwise edges: {len(pairs)}")
+print(f"  median quality: {median_q:.3f}")
+print(f"  converged:      {g.get('converged')}")
+print(f"  rms_residual:   {g.get('rms_residual_px')}")
+print(f"  max_residual:   {g.get('max_residual_px')}")
+
+checks = [
+    ("converged",          bool(g.get("converged"))),
+    ("max_residual<5",     float(g.get("max_residual_px", 99)) < 5.0),
+    ("median_quality>0.2", median_q > 0.2),
+    ("n_pairs>=40",        len(pairs) >= 40),
+]
+print("  Gate checks:")
+for name, v in checks:
+    print(f"    {'PASS' if v else 'FAIL'}  {name}")
+if not all(v for _, v in checks):
+    print("ERROR: Stage 1 gate failed — refusing to recreate fused_direct.zarr.",
+          file=sys.stderr)
+    sys.exit(1)
+PYEOF
 
 # --------------------------------------------------------------------------
 # 2) Recreate fused_direct.zarr at the layout-cache canvas size.

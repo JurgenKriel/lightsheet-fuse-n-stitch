@@ -2,9 +2,9 @@
 #SBATCH --job-name=ls_stitch_blend
 #SBATCH --partition=gpuq
 #SBATCH --gres=gpu:A30:1
-#SBATCH --cpus-per-task=6
+#SBATCH --cpus-per-task=32
 #SBATCH --mem=150G
-#SBATCH --time=02:00:00
+#SBATCH --time=04:00:00
 #SBATCH --array=1-8
 #SBATCH --output=/vast/scratch/users/kriel.j/output.%j.%a.%N.log
 #SBATCH --error=/vast/scratch/users/kriel.j/output.%j.%a.%N.log
@@ -55,6 +55,10 @@ ENV_DIR="/vast/scratch/users/kriel.j/mvstitch_env"
 
 # Belt-and-suspenders GPU pinning (SLURM cgroup already isolates).
 export CUDA_VISIBLE_DEVICES=0
+# Stream stdout so per-chunk blend progress appears in the SLURM log as it runs
+# — mirrors preflight Stage 2 (see debug session preflight-stage2-canvas-too-
+# small, where a silent 1h run looked indistinguishable from a hang).
+export PYTHONUNBUFFERED=1
 
 if ! command -v module &>/dev/null; then
     source /etc/profile.d/modules.sh
@@ -83,7 +87,8 @@ python "$SCRIPT_DIR/08_stitch.py" \
     --out-zarr "$OUT_ZARR" \
     --z-start "$Z_START" \
     --z-end   "$Z_END" \
-    --z-chunk 64
+    --z-chunk 64 \
+    --workers 24
 
 echo "=== Stage 2 task $SLURM_ARRAY_TASK_ID done: z=[$Z_START:$Z_END) ==="
 

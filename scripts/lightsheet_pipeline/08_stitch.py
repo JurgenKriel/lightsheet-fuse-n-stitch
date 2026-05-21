@@ -140,11 +140,23 @@ def build_tile_sims(
 # ---------------------------------------------------------------------------
 
 def _scalar(v: Any, default: float = 0.0) -> float:
-    """Coerce xarray DataArray / numpy scalar / plain value to a Python float."""
+    """Coerce xarray DataArray / numpy scalar / plain value to a Python float.
+
+    multiview-stitcher 0.1.52 stores per-edge `quality` as a (t: 1) DataArray,
+    not a true scalar. Modern numpy refuses `float(arr_1d_len1)` with
+    `TypeError: only 0-dimensional arrays can be converted to Python scalars`,
+    so we unwrap any 1-element ndarray via `.item()` before float().
+    """
     if v is None:
         return default
     if hasattr(v, "values"):  # xarray DataArray
         v = v.values
+    if hasattr(v, "size") and hasattr(v, "ndim") and v.ndim >= 1:
+        try:
+            if v.size == 1:
+                v = v.ravel()[0]
+        except Exception:
+            pass
     try:
         return float(v)
     except (TypeError, ValueError):
@@ -192,7 +204,11 @@ def _stage_translation_um(layout: dict, m: int) -> dict:
     return {"z": 0.0, "y": float(bb.y) * sy, "x": float(bb.x) * sx}
 
 
-def _flatten_pairwise(g_reg_computed: Any, layout: dict) -> list[dict]:
+def _flatten_pairwise(
+    g_reg_computed: Any,
+    layout: dict,
+    metrics_qualities: dict | None = None,
+) -> list[dict]:
     """
     Convert multiview-stitcher's pairwise registration graph into a flat list
     of dicts matching the diagnostics JSON schema.
@@ -201,6 +217,14 @@ def _flatten_pairwise(g_reg_computed: Any, layout: dict) -> list[dict]:
       - "transform"  : xr.DataArray, affine in physical (µm) coords
       - "quality"    : xr.DataArray, scalar NCC-like score
       - "bbox"       : xr.DataArray, overlap-region corners in physical coords
+
+    `metrics_qualities` (when provided) is mvstitch's canonical
+    `nx.get_edge_attributes(g_reg_computed, "quality")` dict from
+    params["pairwise_registration"]["metrics"]["qualities"] — preferred over
+    walking edge attrs because mvstitch sometimes assigns the quality as a
+    dask-wrapped xarray whose `.values` reads as 0 from a fresh edge attr
+    walk in dependent libraries.
+
     Older versions used "shift" / "translation" keys — we handle both for
     backwards compatibility, but the 0.1.52 path is the canonical case.
     """
@@ -226,6 +250,9 @@ def _flatten_pairwise(g_reg_computed: Any, layout: dict) -> list[dict]:
         else:
             edges_iter = []
 
+    metrics_qualities = metrics_qualities or {}
+
+    first_logged = False
     for i_raw, j_raw, attrs in edges_iter:
         try:
             i_val = int(attrs.get("i", i_raw))
@@ -233,7 +260,30 @@ def _flatten_pairwise(g_reg_computed: Any, layout: dict) -> list[dict]:
         except (TypeError, ValueError):
             continue
 
-        quality = _scalar(attrs.get("quality"))
+        if not first_logged:
+            try:
+                raw_q = attrs.get("quality")
+                print(
+                    f"[Stage 1 DEBUG] first edge ({i_raw},{j_raw}) "
+                    f"attrs_keys={list(attrs.keys())} "
+                    f"quality_type={type(raw_q).__name__} "
+                    f"quality_repr={raw_q!r} "
+                    f"metrics_quality_present={(i_raw, j_raw) in metrics_qualities or (j_raw, i_raw) in metrics_qualities}",
+                    file=sys.stderr,
+                )
+            except Exception as exc:
+                print(f"[Stage 1 DEBUG] first-edge log failed: {exc}", file=sys.stderr)
+            first_logged = True
+
+        # Prefer the canonical metrics dict (mvstitch's own qualities export);
+        # fall back to the edge attr. Try both edge orderings — networkx
+        # undirected graphs may key either way.
+        q_source = (
+            metrics_qualities.get((i_raw, j_raw))
+            or metrics_qualities.get((j_raw, i_raw))
+            or attrs.get("quality")
+        )
+        quality = _scalar(q_source)
 
         # Extract shift in µm. Preferred source: the "transform" affine. Fall
         # back to legacy "shift" / "translation" keys if present.
@@ -521,8 +571,15 @@ def stage_register(args: argparse.Namespace, czi: CziFile, layout: dict) -> None
     # Persist diagnostics ---------------------------------------------------
     # return_dict keys: "pairwise_registration" → {"graph": nx.Graph, ...}
     #                   "groupwise_resolution"  → {"metrics": dict, ...}
-    g_reg = params.get("pairwise_registration", {}).get("graph")
+    pairwise_dict = params.get("pairwise_registration", {}) or {}
+    g_reg = pairwise_dict.get("graph")
+    metrics_qualities = (pairwise_dict.get("metrics") or {}).get("qualities") or {}
     groupwise_raw = params.get("groupwise_resolution", {}).get("metrics", {})
+    print(
+        f"[Stage 1 DEBUG] pairwise.metrics.qualities: type={type(metrics_qualities).__name__} "
+        f"n_entries={len(metrics_qualities) if hasattr(metrics_qualities, '__len__') else '?'}",
+        file=sys.stderr,
+    )
     diagnostics = {
         "library_version": "multiview-stitcher==0.1.52",
         "n_tiles": int(layout["n_tiles"]),
@@ -535,7 +592,7 @@ def stage_register(args: argparse.Namespace, czi: CziFile, layout: dict) -> None
                 "w": int(layout["canvas_w"]),
             },
         },
-        "pairwise": _flatten_pairwise(g_reg, layout) if g_reg is not None else [],
+        "pairwise": _flatten_pairwise(g_reg, layout, metrics_qualities) if g_reg is not None else [],
         "groupwise": _flatten_groupwise(groupwise_raw),
     }
     with open(out_dir / "stitch_diagnostics.json", "w") as f:

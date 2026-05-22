@@ -1,0 +1,8 @@
+# GSD planning artifacts — local-only, not part of the published pipeline
+**/.planning/
+
+# Editor / OS noise
+.ipynb_checkpoints/
+__pycache__/
+*.pyc
+.DS_Store

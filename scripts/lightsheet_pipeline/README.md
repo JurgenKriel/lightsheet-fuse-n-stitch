@@ -2,11 +2,18 @@
 
 Python/SLURM pipeline for Zeiss CZI light sheet data.
 
+![Pipeline 3D schematic](docs/pipeline_3d.png)
+
 ```
 07_direct_fuse   →   08_stitch   →   09_output_ome_zarr   →   10_export_ome_tiff (optional)
    (fusion)         (registration         (multi-resolution         (Imaris / Fiji
                      + blending)           OME-Zarr pyramid)         compatibility)
 ```
+
+The figure above shows each stage on a real KL018-sized 6×5 tile grid:
+dual-side illumination merged into one fused tile (left), the 30-tile
+mosaic with ~15% XY overlap (centre, overlap zone in red), and the
+5-level OME-Zarr pyramid (right). Source: `docs/render_pipeline_3d.py`.
 
 ## Submit order
 

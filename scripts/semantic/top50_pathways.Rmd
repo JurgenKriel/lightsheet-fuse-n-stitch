@@ -1,0 +1,729 @@
+---
+title: "Top 50 upregulated pathways per niche — final_fit.rds"
+author: "BCRL Multi-Omics"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    code_folding: hide
+    fig_width: 12
+params:
+  top_n: 50          # pathways per niche in the tables (the headline number)
+  top_plot: 12       # pathways per niche in the dot plots (readability)
+  top_heat: 5        # pathways per niche contributing to the union heatmap
+  fdr: 0.05
+  collections: !r c("H", "C2", "C5")   # H=Hallmark, C2=Reactome/WP/PID/BioCarta, C5=GO:BP
+  min_genes: 10
+  max_genes: 500
+  amean_floor: 1     # expression floor on the universe (Amean, log2). -Inf, 0, 1 or 2 available.
+  kw_marginal: 0.25  # section 5: FDR band counted as a near-miss (shown, but not starred)
+  drop_niches: !r c("V", "I", "N", "T-OC")   # sections 6-7: niches hidden from the panels
+  drop_sets: !r c("NRF2", "NRF2_DeNicola", "OXPHOS [Hallmark]", "OXPHOS [WP]", "NFE2L2 nuclear events")   # excluded from sections 4, 6, 7
+  results_dir: "results"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, dev = "png", dpi = 150)
+library(ggplot2); library(dplyr); library(tidyr); library(readr); library(forcats); library(stringr)
+theme_set(theme_minimal(base_size = 11) +
+          theme(panel.grid.minor = element_blank()))
+RES <- params$results_dir
+```
+
+## Source
+
+Unbiased cameraPR scan of **7,441 MSigDB sets** (Hallmark + Reactome + WikiPathways + PID +
+BioCarta + GO:BP, sizes `r params$min_genes`–`r params$max_genes`) against
+**`final_fit.rds`** — the cell-type-adjusted fit:
+
+```
+final_fit.rds = lmFit(voom(counts, design), design)
+design        = ~ 0 + niche + anno + patient + timepoint    (6,332 units x 77 coefs)
+contrast      = each niche vs the mean of the other 11
+universe      = genes with Amean >= `r params$amean_floor`   <-- EXPRESSION FLOOR (see §0)
+FDR           = BH across all sets WITHIN a niche
+```
+
+This fit is composition-independent (per-niche signal vs dominant cell-type share:
+r = −0.12, p = 0.72) and already abundance-weighted via voom (Spearman 0.927 with `ncells`),
+so "top pathways in niche X" is a cell-intrinsic statement rather than a readout of what
+cells the niche contains. KEGG is excluded by project decision.
+
+```{r load}
+REN <- c(T_A="T-ROS", T_TC="T-PAN", T_P="T-P", T_AA="T-AC", T_AMN="T-MES", T_LE="T-OC",
+         T_OM="T-GL", T_O="T-MET2", T_M="T-MET1", I="I", V="V", N="N")
+NORDER <- c("V","I","T-AC","T-PAN","T-MES","T-MET2","T-MET1","T-P","T-ROS","T-GL","T-OC","N")
+short <- function(s) gsub("_", " ", sub("^(REACTOME|HALLMARK|GOBP|WP|PID|BIOCARTA)_", "", s))
+src <- function(s) sub("_.*", "", s)
+
+up <- read_csv(file.path(RES, "niche_pathways_all_floor.csv"), show_col_types = FALSE) %>%
+  filter(fit == "CELLTYPE_adjusted", Direction == "Up",
+         floor == params$amean_floor,
+         collection %in% params$collections,
+         NGenes >= params$min_genes, NGenes <= params$max_genes) %>%
+  mutate(nn = factor(unname(REN[niche]), levels = NORDER),
+         source = src(gs_name), label = short(gs_name),
+         sig = FDR < params$fdr) %>%
+  filter(!is.na(nn))
+
+top50 <- up %>% filter(sig) %>% group_by(nn) %>%
+  slice_min(FDR, n = params$top_n, with_ties = FALSE) %>%
+  mutate(rank = row_number()) %>% ungroup()
+
+sprintf("%d sets scored | %d significant Up (FDR<%.2g) | %d rows in the top-%d tables",
+        n_distinct(up$gs_name), sum(up$sig), params$fdr, nrow(top50), params$top_n)
+```
+
+# 0. The expression floor (why these results changed)
+
+**Without a floor, the top hit in 5 of 12 niches was
+`REACTOME_OLFACTORY_SIGNALING_PATHWAY` (FDR 3.7e-30 in I).** That was an imputation
+artifact, not biology:
+
+* Only **64 of 418** genes in that set are testable here, and **55 of the 64 are olfactory
+  receptors** (`OR*`). The remaining 9 are shared machinery (ADCY3, ANO2, CNGA4, EBF1,
+  GNAL, GNB1, LDB1, LHX2, REEP1).
+* The signal is **entirely** the ORs. In niche I the mean moderated *t* is **+18.4 for the
+  OR genes** but **−2.8 for the non-OR machinery** — every one of the top-15 leading-edge
+  genes is an `OR*`.
+* Those ORs are **not expressed** (median Amean 0.43 vs 4.66 overall — bottom 2.4%) and
+  **0 of 55 are on the measured 307-gene Xenium panel**, so their values are *pure cytospace
+  imputation*, never observed. They move in lockstep (t = 22.8, 22.8, 22.7, 22.6 …), which
+  `cameraPR` reads as one hugely significant set.
+* Overlap with tumour signalling is negligible: **3 genes** (ADCY3, GNAL, GNB1) with
+  Signaling-by-GPCR, and **zero** with RTK, MAPK, PI3K-AKT or NOTCH — and those 3 are the
+  ones *not* driving the signal.
+
+Restricting the universe to **Amean ≥ `r params$amean_floor`** removes this whole class of
+artifact (it is not an olfactory-specific blacklist). Effect on the olfactory set in niche I:
+
+| universe | genes tested | FDR | rank in niche |
+|---|---|---|---|
+| no floor | 64 | 3.7e-30 | **1** |
+| Amean ≥ 1 | 21 | 5.0e-04 | 155 |
+| Amean ≥ 2 | 12 | 3.3e-01 | 1077 |
+
+Floor 1 keeps 92% of genes (13,875 / 15,101) and drops 43 of the 55 ORs. Most niches retain
+33–46 of their original top 50; the heavily contaminated ones turn over far more
+(I 18/50, T-MET2 19/50, T-OC 23/50 kept). Source: `niche_top_pathways_floor.R`; diagnostics:
+`olfactory_overlap.R`.
+
+### Re-rendering at another floor
+
+`niche_pathways_all_floor.csv` now carries **four** universes, so the whole document can be
+re-rendered at any of them by setting `params$amean_floor`:
+
+| `amean_floor` | genes kept (this fit) | sets usable | what it is |
+|---|---|---|---|
+| `-Inf` | 15,101 / 15,101 (100%) | 7,441 | un-floored baseline |
+| `0` | 15,101 / 15,101 (100%) | 7,441 | **identical to `-Inf` for this fit** |
+| `1` | 13,875 / 15,101 (91.9%) | 7,192 | primary (the default) |
+| `2` | 12,508 / 15,101 (82.8%) | 6,820 | sensitivity |
+
+**`0` and `-Inf` are the same universe here** because no gene in `final_fit.rds` has a
+negative `Amean` (min 0.066). Verified against the pre-floor scan: floor 0 reproduces the
+legacy `niche_pathways_all.csv` exactly — all 89,292 `CELLTYPE_adjusted` rows join with
+identical `NGenes` and `max |ΔFDR| = 0`. So `amean_floor: 0` renders the true pre-floor
+document, and §5's FDR table makes the near-misses it introduces visible either way.
+
+The two differ only for the **hexbin** fit, where 1,514 genes have `Amean < 0` (min −4.611):
+floor 0 keeps 90.0% there, `-Inf` keeps 100%. That is why `-Inf` exists as a separate level —
+it is the only genuine baseline for `final_fit_by_niche.rds`.
+
+> **Caveat on the other fit.** `niche_top_pathways_floor.R` also applies the aliased-coefficient
+> fix (`fit[, colnames(fit$cov.coefficients)]`) needed by `final_fit_by_niche.rds`
+> (design rank 37 of 51). The older un-floored `niche_pathways_all.csv` did not, so its
+> `HEXBIN_unadjusted` rows should not be trusted — but the `floor == -Inf` rows in the
+> current file are an un-floored hexbin baseline that *does* carry the fix, so use those
+> instead of the legacy file. `final_fit.rds` — used throughout this document — is
+> well-conditioned and unaffected.
+
+# 1. Top `r params$top_n` per niche
+
+## Summary — top 3 per niche
+
+The headline list. Niches are ordered as `NORDER`; a niche with fewer than 3 significant Up
+sets shows blanks, and one with none is absent from the table entirely.
+
+```{r top3}
+top3 <- top50 %>% filter(rank <= 3) %>%
+  transmute(niche = nn, rank, pathway = label, collection = source,
+            genes = NGenes, FDR = FDR)
+
+# compact one-row-per-niche view
+top3_wide <- top3 %>%
+  mutate(entry = sprintf("%s  [%.0e]", pathway, FDR)) %>%
+  select(niche, rank, entry) %>%
+  tidyr::pivot_wider(names_from = rank, values_from = entry,
+                     names_prefix = "#", names_sort = TRUE) %>%
+  arrange(niche)
+
+knitr::kable(top3_wide, caption = sprintf(
+  "Top 3 upregulated pathways per niche — %s, Amean >= %g, FDR < %.2g (FDR in brackets)",
+  "cell-type-adjusted", params$amean_floor, params$fdr))
+
+readr::write_csv(top3, file.path(RES, "niche_top3_pathways.csv"))
+readr::write_csv(top3_wide, file.path(RES, "niche_top3_pathways_wide.csv"))
+```
+
+Detail for the same 3 per niche, and the files written:
+`results/niche_top3_pathways.csv` (long) and `results/niche_top3_pathways_wide.csv` (wide).
+
+```{r top3-detail}
+knitr::kable(top3 %>% mutate(FDR = signif(FDR, 3)),
+             caption = "Top 3 per niche — with collection, set size and FDR")
+```
+
+### Figure — top 3 per niche
+
+Same house style as the semantic-analysis report / infographic: the project niche palette
+(`NICHE_COLORS` from `scripts/niche_deg_semantic_analysis.py`, mapped onto the new niche names)
+with each niche's identity from `NICHE_KEY` as the panel subtitle.
+
+```{r top3-plot, fig.height=9.5, fig.width=11}
+# project palette + identities, keyed on the OLD codes -> remapped to the new names
+NICHE_COLORS_OLD <- c(T_LE="#9FCF87", T_AMN="#94FFB5", T_P="#9068AC", V="#F77800",
+                      T_A="#FFCC99", T_M="#2BCE48", I="#C39C94", N="#005C31",
+                      T_TC="#0075DC", T_O="#F0A0FF", T_OM="#C20088", T_AA="#4C005C")
+NICHE_KEY_OLD <- c(T_LE="Leading edge", T_AMN="AC/MES enriched, NPC-like / neuronal tumour",
+                   T_P="Progenitor-enriched tumour", V="Vascular",
+                   T_A="AC-enriched tumour (less microglia)", T_M="Macrophage-infiltrated tumour",
+                   I="Immune", N="Normal", T_TC="T-cell-infiltrated tumour",
+                   T_O="OPC-enriched tumour", T_OM="OPC-enriched, macrophage-enriched tumour",
+                   T_AA="Astro/AC-enriched, microglia-enriched tumour")
+NCOL <- setNames(unname(NICHE_COLORS_OLD), unname(REN[names(NICHE_COLORS_OLD)]))
+NKEY <- setNames(unname(NICHE_KEY_OLD),    unname(REN[names(NICHE_KEY_OLD)]))
+# strip label: "NICHE — identity", so each panel carries its own annotation
+strip_lab <- function(x) sprintf("%s — %s", x, NKEY[as.character(x)])
+
+# contrast-aware ink — same luminance rule as semantic_infographic.py `_ink()`
+ink <- function(hex) {
+  r <- grDevices::col2rgb(hex)
+  ifelse(0.299 * r[1, ] + 0.587 * r[2, ] + 0.114 * r[3, ] < 150, "#ffffff", "#1a1a1a")
+}
+
+pdat <- top3 %>%
+  mutate(strip = factor(strip_lab(niche), levels = strip_lab(levels(niche))),
+         value = -log10(pmax(FDR, 1e-300)),
+         lab   = stringr::str_wrap(pathway, 44),
+         txt   = ink(NCOL[as.character(niche)]))
+
+ggplot(pdat, aes(value, fct_rev(fct_reorder(paste(niche, pathway), rank)))) +
+  geom_col(aes(fill = niche), width = 0.62) +
+  geom_text(aes(label = lab, colour = txt), x = 0.15, hjust = 0,
+            size = 2.7, lineheight = 0.92) +
+  scale_colour_identity() +
+  facet_wrap(~ strip, ncol = 2, scales = "free") +
+  scale_fill_manual(values = NCOL, guide = "none") +
+  scale_y_discrete(labels = NULL, breaks = NULL) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.04))) +
+  labs(x = expression(-log[10]~FDR), y = NULL,
+       title = "Top 3 upregulated pathways per niche",
+       subtitle = sprintf("cell-type-adjusted fit | universe Amean >= %g | FDR < %.2g | project niche palette",
+                          params$amean_floor, params$fdr)) +
+  theme(strip.text = element_text(face = "bold", size = 8.2, hjust = 0),
+        strip.background = element_rect(fill = "#eef0ee", colour = NA),
+        panel.grid.major.y = element_blank(),
+        plot.title = element_text(face = "bold"))
+```
+
+## How many niches actually have 50?
+
+```{r counts, fig.height=3.6}
+cnt <- up %>% filter(sig) %>% count(nn, name = "n_sig") %>%
+  mutate(reached_top_n = pmin(n_sig, params$top_n))
+knitr::kable(cnt, caption = sprintf("Significant Up sets per niche (FDR < %.2g)", params$fdr))
+ggplot(cnt, aes(nn, n_sig)) + geom_col(fill = "grey35") +
+  geom_hline(yintercept = params$top_n, linetype = 2, colour = "red") +
+  labs(x = NULL, y = "significant Up sets",
+       title = sprintf("Red line = the top-%d cut", params$top_n)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Dot plots — top `r params$top_plot` per niche {.tabset}
+
+```{r dots, results="asis", fig.height=4.4, fig.width=9}
+for (n in levels(top50$nn)) {
+  d <- top50 %>% filter(nn == n) %>% slice_min(FDR, n = params$top_plot, with_ties = FALSE)
+  cat("\n\n### ", n, "\n\n", sep = "")
+  if (!nrow(d)) { cat("_no significant Up sets_\n"); next }
+  p <- ggplot(d, aes(-log10(FDR), fct_reorder(label, -FDR))) +
+    geom_segment(aes(x = 0, xend = -log10(FDR), yend = fct_reorder(label, -FDR)),
+                 colour = "grey80") +
+    geom_point(aes(size = NGenes, colour = source)) +
+    scale_size_continuous(range = c(2, 6)) +
+    labs(x = expression(-log[10]~FDR), y = NULL, colour = "collection", size = "genes",
+         title = paste("Top", params$top_plot, "upregulated pathways —", n))
+  print(p); cat("\n\n")
+}
+```
+
+## Union heatmap — top `r params$top_heat` per niche
+
+```{r heatmap, fig.height = 9}
+sets <- top50 %>% group_by(nn) %>% slice_min(FDR, n = params$top_heat, with_ties = FALSE) %>%
+  ungroup() %>% distinct(gs_name) %>% pull(gs_name)
+hm <- up %>% filter(gs_name %in% sets) %>%
+  mutate(value = -log10(pmax(FDR, 1e-300)))
+lim <- quantile(hm$value, 0.98, na.rm = TRUE)
+ggplot(hm, aes(nn, fct_rev(factor(short(gs_name))), fill = pmin(value, lim))) +
+  geom_tile(colour = "white", linewidth = 0.3) +
+  geom_text(data = dplyr::filter(hm, sig), aes(label = "*"), size = 3, vjust = 0.72) +
+  scale_fill_gradient(low = "white", high = "#B2182B", name = expression(-log[10]~FDR)) +
+  labs(x = NULL, y = NULL,
+       title = sprintf("Union of each niche's top %d (n = %d sets); * = FDR < %.2g",
+                       params$top_heat, length(sets), params$fdr)) +
+  theme(axis.text.y = element_text(size = 7),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Full top-`r params$top_n` tables {.tabset}
+
+```{r tables, results="asis"}
+for (n in levels(top50$nn)) {
+  d <- top50 %>% filter(nn == n) %>%
+    transmute(rank, pathway = gs_name, collection = source, genes = NGenes,
+              PValue = signif(PValue, 3), FDR = signif(FDR, 3))
+  cat("\n\n### ", n, "\n\n", sep = "")
+  if (!nrow(d)) { cat("_none_\n\n"); next }
+  print(knitr::kable(d, row.names = FALSE))
+  cat("\n\n")
+}
+```
+
+# 2. What the top 50 are made of
+
+```{r collections, fig.height=4}
+top50 %>% count(nn, source) %>% group_by(nn) %>% mutate(frac = n / sum(n)) %>%
+  ggplot(aes(nn, frac, fill = source)) + geom_col() +
+  labs(x = NULL, y = "fraction of the top 50", fill = "collection",
+       title = "Which resource supplies each niche's top hits") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+# 3. Shared vs niche-specific
+
+```{r shared}
+shared <- top50 %>% count(gs_name, name = "n_niches") %>%
+  left_join(top50 %>% distinct(gs_name, label), by = "gs_name")
+knitr::kable(shared %>% filter(n_niches >= 4) %>% arrange(desc(n_niches)) %>%
+               transmute(pathway = label, n_niches) %>% head(25),
+             caption = "Pathways in the top 50 of >= 4 niches (generic / broadly shifted)")
+uniq <- shared %>% filter(n_niches == 1) %>%
+  inner_join(top50, by = c("gs_name", "label")) %>%
+  group_by(nn) %>% slice_min(FDR, n = 5, with_ties = FALSE) %>%
+  transmute(niche = nn, pathway = label, FDR = signif(FDR, 3)) %>% arrange(niche)
+knitr::kable(uniq, caption = "Top 5 pathways UNIQUE to each niche's top 50")
+```
+
+# 4. Curated signalling + redox signatures
+
+The curated signalling signatures (NOTCH, PDGF, RAS-MAPK, JAK-STAT, TGF-β, WNT, BMP) and the
+redox marker sets, scored on the **same `final_fit.rds`** contrasts.
+
+> **The DeNicola NRF2 signature is excluded** (`params$drop_sets`; set it to `c()` to restore).
+> It was entering these panels **twice** — as `NRF2` in the signalling panel and as
+> `NRF2_DeNicola` in the redox panel — and the two are the same 23-gene list: 18 genes present,
+> byte-identical `mean logFC` and `FDR` in all 12 niches. It is also non-specific (no
+> niche-specific cameraPR enrichment on either aggregation). The NRF2 axis is still represented
+> in §7 by `REACTOME_KEAP1_NFE2L2_PATHWAY`, which is the regulatory machinery rather than the
+> target signature.
+
+> **Not comparable to the top-50 FDRs above.** These are a separate, much smaller gene-set
+> universe (8 and 6 sets), BH-adjusted **across niches within each set** — not across 7,441
+> sets within a niche. A pathway can be significant here and absent from the top 50 purely
+> because of the multiple-testing universe, not because the evidence differs.
+
+Gene sets: `results/pathway_signatures_geneset.tsv` (CGP) + hardcoded DeNicola NRF2, and
+`results/ros_markers_geneset.tsv`. **NOTCH = `NGUYEN_NOTCH1_TARGETS_UP`** — swapped from
+`VILIMAS_NOTCH1_TARGETS_UP` (T-ALL-derived, contains CD3D/CD3G/CD2/ZAP70/LCK; zero gene
+overlap with NGUYEN). Under VILIMAS, NOTCH scored significant in 5 niches; under NGUYEN it
+is significant in none — the old signal was immune gene content.
+
+```{r curated-load}
+PLAB <- c(RAS_MAPK = "RAS-MAPK", JAK_STAT = "JAK-STAT", TGF_BETA = "TGF-β")
+pl <- function(x) ifelse(x %in% names(PLAB), PLAB[x], x)
+
+sig8 <- read_csv(file.path(RES, "pathway_adjusted_per_niche.csv"), show_col_types = FALSE) %>%
+  transmute(set = pl(pathway), panel = "signalling", niche, mean_logFC,
+            n_present, dir = camera_dir, FDR = camera_FDR)
+ros6 <- read_csv(file.path(RES, "ros_markers_adjusted.csv"), show_col_types = FALSE) %>%
+  transmute(set = marker_set, panel = "redox", niche, mean_logFC,
+            n_present, dir = camera_dir, FDR = camera_FDR)
+
+cur <- bind_rows(sig8, ros6) %>%
+  filter(!set %in% params$drop_sets) %>%   # see the note above -- duplicated + non-specific
+  mutate(nn = factor(unname(REN[niche]), levels = NORDER),
+         signed = ifelse(dir == "Up", 1, -1) * -log10(pmax(FDR, 1e-300)),
+         sig = FDR < params$fdr) %>%
+  filter(!is.na(nn))
+SORDER <- c("NOTCH","NOTCH_VILIMAS","PDGF","RAS-MAPK","JAK-STAT","TGF-β","WNT","BMP","NRF2",
+            "NRF2_DeNicola","HALLMARK_ROS","GO_response_oxidative",
+            "GO_cellular_resp_oxidative","GO_glutathione_metabolic","GO_reg_ROS_metabolic")
+# any set present in the data but missing from SORDER would be dropped by the factor
+# levels below -- surface that rather than losing it silently
+missing_from_order <- setdiff(unique(cur$set), SORDER)
+if (length(missing_from_order)) warning("not in SORDER, will be dropped: ",
+                                        paste(missing_from_order, collapse = ", "))
+cur <- cur %>% mutate(set = factor(set, levels = rev(intersect(SORDER, unique(set)))))
+sprintf("%d sets x %d niches", n_distinct(cur$set), n_distinct(cur$nn))
+```
+
+## Specificity — signed cameraPR
+
+```{r curated-camera, fig.height=5}
+lim <- quantile(abs(cur$signed), 0.98, na.rm = TRUE)
+ggplot(cur, aes(nn, set, fill = pmax(pmin(signed, lim), -lim))) +
+  geom_tile(colour = "white", linewidth = 0.3) +
+  geom_text(data = dplyr::filter(cur, sig), aes(label = "*"), size = 4, vjust = 0.72) +
+  facet_grid(panel ~ ., scales = "free_y", space = "free_y") +
+  scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#B2182B", midpoint = 0,
+                       name = expression(signed~-log[10]~FDR)) +
+  labs(x = NULL, y = NULL,
+       title = sprintf("Curated signatures on final_fit.rds (* = FDR < %.2g)", params$fdr)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        strip.text.y = element_text(angle = 0, face = "bold"))
+```
+
+## Magnitude — mean logFC
+
+```{r curated-lfc, fig.height=5}
+lim2 <- quantile(abs(cur$mean_logFC), 0.98, na.rm = TRUE)
+ggplot(cur, aes(nn, set, fill = pmax(pmin(mean_logFC, lim2), -lim2))) +
+  geom_tile(colour = "white", linewidth = 0.3) +
+  geom_text(data = dplyr::filter(cur, sig), aes(label = "*"), size = 4, vjust = 0.72) +
+  facet_grid(panel ~ ., scales = "free_y", space = "free_y") +
+  scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#B2182B", midpoint = 0,
+                       name = "mean logFC") +
+  labs(x = NULL, y = NULL,
+       title = "Same sets, magnitude rather than specificity") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        strip.text.y = element_text(angle = 0, face = "bold"))
+```
+
+## Significant hits
+
+```{r curated-hits}
+knitr::kable(
+  cur %>% filter(sig, dir == "Up") %>% arrange(panel, set, FDR) %>%
+    transmute(panel, set = as.character(set), niche = as.character(nn),
+              genes = n_present, mean_logFC = signif(mean_logFC, 3), FDR = signif(FDR, 3)),
+  caption = sprintf("cameraPR-Up at FDR < %.2g", params$fdr))
+```
+
+```{r curated-per-niche, fig.height=3.6}
+cur %>% filter(sig, dir == "Up") %>% count(nn, panel) %>%
+  ggplot(aes(nn, n, fill = panel)) + geom_col() +
+  labs(x = NULL, y = "curated sets Up", fill = NULL,
+       title = "Curated sets significantly Up per niche") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+# 5. Keyword lookup
+
+Sets whose name matches the redox keyword regex. **Inclusion is by near-miss, not by
+significance:** any set reaching FDR < `r params$kw_marginal` in at least one niche is shown,
+so a set that just missed the `r params$fdr` cut appears as a row rather than vanishing from
+the figure. `*` = FDR < `r params$fdr`; `·` = marginal (FDR < `r params$kw_marginal`).
+
+This matters because the expression floor (§0) moves sets across the cut rather than
+deleting them — under no floor, T-ROS had 10 keyword hits at FDR < 0.05; under floor 1 it has
+6, and the four that left (FDR 0.073–0.131) are near-misses, not absences. The FDR table below
+makes that visible instead of silently dropping them.
+
+```{r keyword, fig.height=9}
+KW <- "OXIDATIVE|GLUTATHIONE|REACTIVE_OXYGEN|NFE2L2|KEAP1|PEROXI|SUPEROXIDE|DETOX"
+kw <- up %>%
+  filter(grepl(KW, gs_name)) %>%
+  group_by(gs_name) %>% filter(min(FDR) < params$kw_marginal) %>% ungroup()
+
+# short() strips the collection prefix, so HALLMARK_/GOBP_/WP_OXIDATIVE_PHOSPHORYLATION all
+# collapse to one label -- three distinct sets would overplot on a single heatmap row and
+# give the wide FDR table duplicate keys. Tag only the labels that actually collide.
+dupe_lab <- kw %>% distinct(gs_name, label) %>% count(label) %>% filter(n > 1) %>% pull(label)
+kw <- kw %>%
+  mutate(pathway = ifelse(label %in% dupe_lab, sprintf("%s [%s]", label, source), label),
+         mark = ifelse(sig, "*", ifelse(FDR < params$kw_marginal, "\u00b7", "")),
+         # order rows by each set's best FDR, so the strongest evidence sits at the top
+         row = forcats::fct_reorder(factor(pathway), FDR, .fun = min, .desc = TRUE))
+
+if (nrow(kw)) {
+  print(
+    ggplot(kw, aes(nn, row, fill = -log10(pmax(FDR, 1e-300)))) +
+      geom_tile(colour = "white", linewidth = 0.3) +
+      geom_text(data = dplyr::filter(kw, mark != ""), aes(label = mark),
+                size = 3, vjust = 0.72) +
+      scale_fill_gradient(low = "white", high = "#B2182B", name = expression(-log[10]~FDR)) +
+      labs(x = NULL, y = NULL,
+           title = sprintf("Keyword-matched sets reaching FDR < %.2g in >= 1 niche",
+                           params$kw_marginal),
+           subtitle = sprintf("* = FDR < %.2g | \u00b7 = marginal | universe Amean >= %g",
+                              params$fdr, params$amean_floor)) +
+      theme(axis.text.y = element_text(size = 7),
+            axis.text.x = element_text(angle = 45, hjust = 1)))
+} else cat(sprintf("no keyword-matched set reaches FDR < %.2g in any niche\n", params$kw_marginal))
+```
+
+## Keyword-matched sets — FDR per niche
+
+The numbers behind the figure. Sets are ordered by their best FDR across niches; `n_sig` and
+`n_marginal` count niches below `r params$fdr` and below `r params$kw_marginal`.
+
+```{r keyword-fdr-table}
+kw_tab <- kw %>%
+  arrange(nn) %>%
+  transmute(pathway, niche = as.character(nn), FDR = signif(FDR, 3)) %>%
+  tidyr::pivot_wider(names_from = niche, values_from = FDR)
+
+kw_summary <- kw %>%
+  group_by(pathway) %>%
+  summarise(collection = dplyr::first(source), genes = dplyr::first(NGenes),
+            best_niche = as.character(nn[which.min(FDR)]), best_FDR = signif(min(FDR), 3),
+            n_sig = sum(FDR < params$fdr),
+            n_marginal = sum(FDR >= params$fdr & FDR < params$kw_marginal),
+            .groups = "drop") %>%
+  arrange(best_FDR)
+
+knitr::kable(kw_summary, caption = sprintf(
+  "Keyword-matched sets: best niche and how many niches clear each band (FDR < %.2g / < %.2g)",
+  params$fdr, params$kw_marginal))
+
+knitr::kable(kw_tab %>% arrange(match(pathway, kw_summary$pathway)),
+             caption = "FDR per niche for the same sets (blank = not tested at this set size)")
+
+readr::write_csv(
+  kw %>% transmute(pathway = gs_name, collection = source, niche = as.character(nn),
+                   NGenes, PValue, FDR, floor = params$amean_floor),
+  file.path(RES, sprintf("keyword_redox_fdr_floor%g.csv", params$amean_floor)))
+```
+
+```{r export}
+readr::write_csv(top50 %>% transmute(niche = as.character(nn), rank, pathway = gs_name,
+                                     collection = source, NGenes, PValue, FDR),
+                 file.path(RES, sprintf("top%d_pathways_adjusted.csv", params$top_n)))
+sprintf("wrote %s", file.path(RES, sprintf("top%d_pathways_adjusted.csv", params$top_n)))
+```
+
+# 6. Signalling signatures only
+
+§4's two panels restricted to the curated signalling signatures — the redox marker sets, the
+retired `NOTCH_VILIMAS` and `params$drop_sets` (the DeNicola NRF2 signature, see §4) are
+excluded. Both colour scales are rescaled to what is
+shown, so contrasts are not flattened by the excluded rows. Row order follows `SORDER` and
+niche order `NORDER`, as in §4. `*` = cameraPR FDR < `r params$fdr`.
+
+**Hidden niches:** `r paste(params$drop_niches, collapse = ", ")` — the three non-tumour
+niches plus T-OC — here and in §7 (`params$drop_niches`; set it to `c()` to show all 12).
+
+> This is a **display** restriction, not a re-analysis. Every contrast is still *this niche vs
+> the mean of the other 11*, and every FDR is still BH across all 12 niches — both are
+> properties of `final_fit.rds` and the scoring scripts, not of the plot. So a `*` here means
+> "significant among all 12 niches", and the hidden niches still contribute to each set's
+> comparison. Genuinely excluding V/I/N from the comparison would need a refit with a
+> tumour-only contrast, which is a different analysis.
+
+## Magnitude — mean logFC
+
+```{r signalling-lfc, fig.height=3.8}
+# the full curated signalling panel, minus anything params$drop_sets removes
+SIG8 <- setdiff(c("NOTCH", "PDGF", "RAS-MAPK", "JAK-STAT", "TGF-β", "WNT", "BMP", "NRF2"),
+                params$drop_sets)
+
+missing_sig8 <- setdiff(SIG8, as.character(unique(cur$set)))
+if (length(missing_sig8)) warning("signalling set(s) absent from the data: ",
+                                  paste(missing_sig8, collapse = ", "))
+
+sig_only <- cur %>%
+  filter(panel == "signalling", as.character(set) %in% SIG8,
+         !as.character(nn) %in% params$drop_niches) %>%
+  # droplevels matters twice: it drops the redox / VILIMAS *set* levels (else blank rows) and
+  # the excluded *niche* levels (else empty columns, since nn is a NORDER factor)
+  droplevels()
+
+lim3 <- quantile(abs(sig_only$mean_logFC), 0.98, na.rm = TRUE)
+ggplot(sig_only, aes(nn, set, fill = pmax(pmin(mean_logFC, lim3), -lim3))) +
+  geom_tile(colour = "white", linewidth = 0.3) +
+  geom_text(data = dplyr::filter(sig_only, sig), aes(label = "*"), size = 4, vjust = 0.72) +
+  scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#B2182B", midpoint = 0,
+                       name = "mean logFC") +
+  labs(x = NULL, y = NULL,
+       title = "Curated signalling signatures — mean logFC",
+       subtitle = sprintf("%d signatures on final_fit.rds (cell-type-adjusted) | %d tumour niches | * = FDR < %.2g",
+                          nlevels(sig_only$set), nlevels(sig_only$nn), params$fdr)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r signalling-lfc-table}
+knitr::kable(
+  sig_only %>%
+    arrange(nn) %>%          # nn is a NORDER factor -> columns follow the figure's x-axis
+    transmute(set = as.character(set), niche = as.character(nn),
+              mean_logFC = signif(mean_logFC, 2)) %>%
+    tidyr::pivot_wider(names_from = niche, values_from = mean_logFC) %>%
+    arrange(match(set, SIG8)),
+  caption = sprintf("mean logFC per niche — %d curated signalling signatures, tumour niches only",
+                    nlevels(sig_only$set)))
+```
+
+> Read these as magnitudes, not rankings: per-niche `mean logFC` does not reproduce across
+> aggregations (see `HANDOFF.md` §2e). `cameraPR` — the specificity panel below — is the
+> statistic to report.
+
+## Specificity — signed $-\log_{10}$ FDR
+
+Signed cameraPR: $-\log_{10}\mathrm{FDR}$ carrying the sign of the cameraPR direction, so
+red = Up, blue = Down. Note the multiple-testing universe — BH across the **12 niches within
+each set**, not across the 7,441 sets of §1, so these FDRs are not comparable to the top-50
+ones. $|{\cdot}| > 1.3$ is FDR < 0.05.
+
+```{r signalling-fdr, fig.height=3.8}
+lim4 <- quantile(abs(sig_only$signed), 0.98, na.rm = TRUE)
+ggplot(sig_only, aes(nn, set, fill = pmax(pmin(signed, lim4), -lim4))) +
+  geom_tile(colour = "white", linewidth = 0.3) +
+  geom_text(data = dplyr::filter(sig_only, sig), aes(label = "*"), size = 4, vjust = 0.72) +
+  scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#B2182B", midpoint = 0,
+                       name = expression(signed~-log[10]~FDR)) +
+  labs(x = NULL, y = NULL,
+       title = expression("Curated signalling signatures — signed" ~ -log[10] ~ "FDR"),
+       subtitle = sprintf("%d signatures on final_fit.rds | %d tumour niches | * = FDR < %.2g | sign = cameraPR direction",
+                          nlevels(sig_only$set), nlevels(sig_only$nn), params$fdr)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r signalling-fdr-table}
+knitr::kable(
+  sig_only %>%
+    arrange(nn) %>%
+    transmute(set = as.character(set), niche = as.character(nn),
+              signed = round(signed, 2)) %>%
+    tidyr::pivot_wider(names_from = niche, values_from = signed) %>%
+    arrange(match(set, SIG8)),
+  caption = sprintf(paste("Signed -log10 FDR per niche — %d curated signalling signatures,",
+                          "tumour niches (sign = cameraPR direction; |x| > 1.3 is FDR < %.2g)"),
+                    nlevels(sig_only$set), params$fdr))
+```
+
+# 7. Signalling + OXPHOS / NRF2 combined
+
+The curated signalling signatures from §6 together with the **OXPHOS** and **KEAP1–NFE2L2**
+sets that section 5's unbiased scan flagged in T-ROS and T-GL. The DeNicola NRF2 signature is
+excluded with the rest of §4 (`params$drop_sets`); the NRF2 axis is represented here by
+`REACTOME_KEAP1_NFE2L2_PATHWAY` instead — the regulatory machinery rather than the target
+signature.
+
+> **Why these are re-scored rather than lifted from §5.** §5's FDR is BH across ~7,441 sets
+> *within a niche*; the curated panels are BH across the 12 niches *within a set*. Those are
+> different multiple-testing universes and must not share a colour scale. §5 is also
+> cameraPR-only, so it carries no `mean logFC` and could not appear in the magnitude panel at
+> all. `oxphos_keap1_adjusted.R` therefore re-scores these 5 sets on the **same
+> `final_fit.rds` contrasts, with the same cameraPR call and the same BH grouping** as the
+> curated 8 — so everything on these two figures is directly comparable.
+
+**Only the GO version of OXPHOS is plotted** (`GOBP_OXIDATIVE_PHOSPHORYLATION`); the Hallmark
+and WP variants are in `params$drop_sets` — remove them from it to show all three.
+
+`oxphos_keap1_adjusted.R` still scores all three, because §5 shows the resources do not agree
+and the full comparison is worth keeping on disk (`results/oxphos_keap1_adjusted.csv`). They
+agree on direction but not magnitude, and **GOBP is the most conservative of the three** — in
+T-ROS it gives FDR 1.9e-03 against Hallmark's 1.7e-06 and WP's 8.9e-04; in T-GL, 1.2e-04
+against 8.4e-09 and 4.8e-05. So the picture below is the weakest of the three statements, not
+the strongest.
+
+`r paste(params$drop_niches, collapse = ", ")` hidden, with the same display-only caveat as §6.
+
+```{r combined-load}
+OXF <- file.path(RES, "oxphos_keap1_adjusted.csv")
+have_oxk <- file.exists(OXF)
+if (!have_oxk) cat("missing", OXF, "\n  -> run: sbatch scripts/semantic/oxkeap.sh\n")
+
+OXLAB <- c(OXPHOS_Hallmark = "OXPHOS [Hallmark]", OXPHOS_GOBP = "OXPHOS [GOBP]",
+           OXPHOS_WP = "OXPHOS [WP]", KEAP1_NFE2L2 = "KEAP1-NFE2L2",
+           NFE2L2_nuclear = "NFE2L2 nuclear events")
+OXORDER <- unname(OXLAB)
+
+if (have_oxk) {
+  oxk <- read_csv(OXF, show_col_types = FALSE) %>%
+    transmute(set = unname(OXLAB[marker_set]), panel = "OXPHOS / NRF2", niche,
+              mean_logFC, n_present, dir = camera_dir, FDR = camera_FDR)
+
+  comb <- bind_rows(sig8 %>% filter(set %in% SIG8) %>% mutate(panel = "signalling"), oxk) %>%
+    mutate(nn = factor(unname(REN[niche]), levels = NORDER),
+           signed = ifelse(dir == "Up", 1, -1) * -log10(pmax(FDR, 1e-300)),
+           sig = FDR < params$fdr,
+           panel = factor(panel, levels = c("signalling", "OXPHOS / NRF2")),
+           set = factor(set, levels = rev(c(SIG8, OXORDER)))) %>%
+    filter(!is.na(nn), !is.na(set),
+           !as.character(nn) %in% params$drop_niches,
+           !as.character(set) %in% params$drop_sets) %>%
+    droplevels()        # drop hidden niche + set levels, else they plot as empty rows/columns
+  sprintf("%d sets x %d niches (%d signalling + %d OXPHOS/NRF2)",
+          n_distinct(comb$set), n_distinct(comb$nn),
+          n_distinct(comb$set[comb$panel == "signalling"]),
+          n_distinct(comb$set[comb$panel == "OXPHOS / NRF2"]))
+}
+```
+
+Sets shown: `r if (have_oxk) knitr::combine_words(levels(comb$set)) else "(none)"`.
+
+## Magnitude — mean logFC
+
+```{r combined-lfc, fig.height=4.8, eval=have_oxk}
+lim5 <- quantile(abs(comb$mean_logFC), 0.98, na.rm = TRUE)
+# pathways across, niches down; fct_rev undoes set's rev() levels (NOTCH leftmost) and puts
+# the first NORDER niche at the top
+ggplot(comb, aes(fct_rev(set), fct_rev(nn), fill = pmax(pmin(mean_logFC, lim5), -lim5))) +
+  geom_tile(colour = "white", linewidth = 0.3) +
+  geom_text(data = dplyr::filter(comb, sig), aes(label = "*"), size = 4, vjust = 0.72) +
+  facet_grid(. ~ panel, scales = "free_x", space = "free_x") +
+  scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#B2182B", midpoint = 0,
+                       name = "mean logFC") +
+  labs(x = NULL, y = NULL,
+       title = "Signalling + OXPHOS / NRF2 — mean logFC",
+       subtitle = sprintf("%d sets scored on final_fit.rds the same way | %d tumour niches | * = FDR < %.2g",
+                          n_distinct(comb$set), n_distinct(comb$nn), params$fdr)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        strip.text.x = element_text(face = "bold"))
+```
+
+## Specificity — signed $-\log_{10}$ FDR
+
+```{r combined-fdr, fig.height=4.8, eval=have_oxk}
+lim6 <- quantile(abs(comb$signed), 0.98, na.rm = TRUE)
+ggplot(comb, aes(nn, set, fill = pmax(pmin(signed, lim6), -lim6))) +
+  geom_tile(colour = "white", linewidth = 0.3) +
+  geom_text(data = dplyr::filter(comb, sig), aes(label = "*"), size = 4, vjust = 0.72) +
+  facet_grid(panel ~ ., scales = "free_y", space = "free_y") +
+  scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#B2182B", midpoint = 0,
+                       name = expression(signed~-log[10]~FDR)) +
+  labs(x = NULL, y = NULL,
+       title = expression("Signalling + OXPHOS / NRF2 — signed" ~ -log[10] ~ "FDR"),
+       subtitle = sprintf("* = FDR < %.2g | sign = cameraPR direction | BH across niches within each set",
+                          params$fdr)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        strip.text.y = element_text(angle = 0, face = "bold"))
+```
+
+## Significant hits
+
+```{r combined-hits, eval=have_oxk}
+knitr::kable(
+  comb %>% filter(sig) %>% arrange(panel, set, FDR) %>%
+    transmute(panel = as.character(panel), set = as.character(set),
+              niche = as.character(nn), direction = dir, genes = n_present,
+              mean_logFC = signif(mean_logFC, 3), FDR = signif(FDR, 3)),
+  caption = sprintf("All cameraPR hits at FDR < %.2g across the combined panel", params$fdr))
+
+readr::write_csv(
+  comb %>% transmute(panel = as.character(panel), set = as.character(set),
+                     niche = as.character(nn), direction = dir, n_present,
+                     mean_logFC, FDR, signed),
+  file.path(RES, "combined_signalling_oxphos_nrf2.csv"))
+```
+
+# Session
+
+```{r session}
+sessionInfo()
+```

@@ -679,7 +679,10 @@ p_comb_lfc <-
   geom_text(data = dplyr::filter(comb, sig), aes(label = "*"), size = 4, vjust = 0.72) +
   facet_grid(. ~ panel, scales = "free_x", space = "free_x") +
   scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#B2182B", midpoint = 0,
-                       name = "mean logFC") +
+                       name = "mean logFC",
+                       # rectangles, not a raster -> the SVG carries no embedded bitmap and
+                       # stays fully vector for print (ggplot2 >= 3.5; was raster = FALSE)
+                       guide = guide_colourbar(display = "rectangles")) +
   labs(x = NULL, y = NULL,
        title = "Signalling + OXPHOS / NRF2 — mean logFC",
        subtitle = sprintf("%d sets scored on final_fit.rds the same way | %d tumour niches | * = FDR < %.2g",
@@ -689,10 +692,11 @@ p_comb_lfc <-
 
 p_comb_lfc
 
-# vector copy for figures/slides. device = grDevices::svg (cairo) rather than ggsave's "svg",
-# which needs svglite -- not installed in the project library.
+# vector copy for figures/slides. svglite, NOT grDevices::svg (cairo): cairo composites through
+# a "remove-color-and-invert-alpha" filter + luminance masks that Affinity Publisher ignores,
+# so the whole figure imports as solid black. svglite emits plain SVG and keeps text as text.
 ggsave(file.path(RES, "combined_signalling_oxphos_nrf2_lfc.svg"), p_comb_lfc,
-       device = grDevices::svg, width = 9, height = 4.8)
+       device = svglite::svglite, width = 9, height = 4.8)
 ```
 
 ## Specificity — signed $-\log_{10}$ FDR

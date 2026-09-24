@@ -673,7 +673,8 @@ Sets shown: `r if (have_oxk) knitr::combine_words(levels(comb$set)) else "(none)
 lim5 <- quantile(abs(comb$mean_logFC), 0.98, na.rm = TRUE)
 # pathways across, niches down; fct_rev undoes set's rev() levels (NOTCH leftmost) and puts
 # the first NORDER niche at the top
-ggplot(comb, aes(fct_rev(set), fct_rev(nn), fill = pmax(pmin(mean_logFC, lim5), -lim5))) +
+p_comb_lfc <-
+  ggplot(comb, aes(fct_rev(set), fct_rev(nn), fill = pmax(pmin(mean_logFC, lim5), -lim5))) +
   geom_tile(colour = "white", linewidth = 0.3) +
   geom_text(data = dplyr::filter(comb, sig), aes(label = "*"), size = 4, vjust = 0.72) +
   facet_grid(. ~ panel, scales = "free_x", space = "free_x") +
@@ -685,6 +686,13 @@ ggplot(comb, aes(fct_rev(set), fct_rev(nn), fill = pmax(pmin(mean_logFC, lim5), 
                           n_distinct(comb$set), n_distinct(comb$nn), params$fdr)) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1),
         strip.text.x = element_text(face = "bold"))
+
+p_comb_lfc
+
+# vector copy for figures/slides. device = grDevices::svg (cairo) rather than ggsave's "svg",
+# which needs svglite -- not installed in the project library.
+ggsave(file.path(RES, "combined_signalling_oxphos_nrf2_lfc.svg"), p_comb_lfc,
+       device = grDevices::svg, width = 9, height = 4.8)
 ```
 
 ## Specificity — signed $-\log_{10}$ FDR

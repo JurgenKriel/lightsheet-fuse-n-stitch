@@ -367,16 +367,17 @@ legend_df <- dplyr::bind_rows(lapply(rows_spec, function(s) {
 legend_df$fill_id <- paste(legend_df$group, legend_df$level, sep = "::")
 all_colors        <- setNames(legend_df$color, legend_df$fill_id)
 
-legend_panel <- ggplot(legend_df, aes(x = 0.15, y = level)) +
+legend_panel <- ggplot(legend_df, aes(x = 0.1, y = level)) +
   # shape 22 = filled square with absolute size, so keys stay square regardless
   # of how the facet panels stretch (geom_tile keys took the panel aspect ratio)
-  geom_point(aes(fill = fill_id), shape = 22, size = 4,
+  geom_point(aes(fill = fill_id), shape = 22, size = 5.5,
              color = "white", stroke = 0.3) +
-  geom_text(aes(x = 0.32, label = as.character(level)),
-            hjust = 0, size = 2.8, color = "grey15") +
+  geom_text(aes(x = 0.14, label = as.character(level)),
+            hjust = 0, vjust = 0.5, size = 2.8, color = "grey15") +
   scale_fill_manual(values = all_colors, guide = "none") +
   scale_x_continuous(limits = c(0, 1.5), expand = c(0, 0)) +
-  facet_wrap(~ group, ncol = 1, scales = "free_y", strip.position = "left") +
+  # space = "free_y" gives every level the same row height across groups
+  facet_grid(group ~ ., scales = "free_y", space = "free_y", switch = "y") +
   theme_void() +
   theme(
     strip.text.y.left = element_text(size = 8, face = "bold", angle = 0,

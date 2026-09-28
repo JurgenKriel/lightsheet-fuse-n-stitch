@@ -1,0 +1,403 @@
+---
+title: "Cohort plot"
+author: "Jurgen Kriel"
+date: "2026-03-31"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+.libPaths("/vast/projects/BCRL_Multi_Omics/Venture_lib/lib/R/")
+dyn.load("/stornext/System/data/software/rhel/9/base/tools/glpk/5.0/lib/libglpk.so.40")
+
+library(ggplot2)  
+library(dplyr)
+library(tidyr)
+library(readxl)
+library(patchwork)
+library(RColorBrewer)
+library(stringr)
+library(grid)
+```
+
+```{r read-data}
+read_cohort_excel <- function(path, sheet = "Sample info") {
+  raw <- readxl::read_excel(path, sheet = sheet, col_names = TRUE,
+                            .name_repair = "unique")
+  
+  # Clean all column names (trim spaces) — do NOT overwrite col 1
+  colnames(raw) <- trimws(colnames(raw))
+  # Standardise the TRU-ID column name (dash → underscore)
+  colnames(raw) <- gsub("^TRU-ID$", "TRU_ID", colnames(raw))
+
+  message("Columns: ", paste(colnames(raw), collapse = " | "))
+
+  # Cohort spreadsheets differ between versions (e.g. v4 had a "Multiome?"
+  # column that v6 replaced with "snATAC"). Add any optional columns we
+  # reference so they flow through the filter and mutate steps without
+  # erroring when absent.
+  for (opt in c("snATAC")) {
+    if (!opt %in% colnames(raw)) raw[[opt]] <- NA_character_
+  }
+
+  df <- raw %>%
+    dplyr::filter(
+      !is.na(Patient),
+      trimws(as.character(Patient)) != "",
+      !grepl("EXTRA|SNRNA", as.character(`Cohort ID`), ignore.case = TRUE)
+    ) %>%
+    dplyr::mutate(
+      Diagnosis = dplyr::case_when(
+        grepl("Oligodendroglioma", Diagnosis, ignore.case = TRUE) ~ "IDH-O",
+        grepl("Astrocytoma",       Diagnosis, ignore.case = TRUE) ~ "IDH-A",
+        TRUE ~ as.character(Diagnosis)
+      ),
+      Grade = as.character(Grade),
+      snRNA    = ifelse(grepl("yes", as.character(`Single nuclei?`), ignore.case = TRUE), "Yes", "No"),
+      snATAC   = ifelse(grepl("yes", as.character(`snATAC`), ignore.case = TRUE), "Yes", "No"),
+      ST       = ifelse(grepl("yes", as.character(`ST?`),            ignore.case = TRUE), "Yes", "No"),
+      SM       = ifelse(grepl("yes", as.character(`SM?`),            ignore.case = TRUE), "Yes", "No"),
+      Chemo = dplyr::case_when(
+        grepl("vorasidenib", as.character(`Chemotherapy prior to surgery`), ignore.case = TRUE) ~ "Vorasidenib",
+        grepl("safusidenib", as.character(`Chemotherapy prior to surgery`), ignore.case = TRUE) ~ "Safusidenib",
+        grepl("bev",         as.character(`Chemotherapy prior to surgery`), ignore.case = TRUE) ~ "TMZ+Bev",
+        grepl("tmz",         as.character(`Chemotherapy prior to surgery`), ignore.case = TRUE) ~ "TMZ",
+        TRUE ~ "No"
+      ),
+      Radiotherapy = ifelse(
+        grepl("yes", as.character(`Radiotherapy prior to surgery`), ignore.case = TRUE),
+        "Yes", "No"
+      ),
+      Surgery = dplyr::case_when(
+        grepl("Sub_Treated",   Resection, ignore.case = TRUE)                                            ~ "Subsequent_Treated",
+        grepl("Sub_Untreated", Resection, ignore.case = TRUE)                                            ~ "Subsequent_Untreated",
+        grepl("Subsequent",    Resection, ignore.case = TRUE) & (Chemo != "No" | Radiotherapy == "Yes") ~ "Subsequent_Treated",
+        grepl("Subsequent",    Resection, ignore.case = TRUE)                                            ~ "Subsequent_Untreated",
+        grepl("Initial",       Resection, ignore.case = TRUE) & (Chemo != "No" | Radiotherapy == "Yes") ~ "Initial_Treated",
+        grepl("Initial",       Resection, ignore.case = TRUE)                                            ~ "Initial",
+        TRUE ~ as.character(Resection)
+      ),
+      Cohort = dplyr::case_when(
+        grepl("ven",          as.character(`Cohort ID`), ignore.case = TRUE) ~ "VENTURE",
+        grepl("anheart",      as.character(`Cohort ID`), ignore.case = TRUE) ~ "AnHeart",
+        grepl("longitudinal", as.character(`Cohort ID`), ignore.case = TRUE) ~ "Longitudinal",
+        grepl("progression",  as.character(`Cohort ID`), ignore.case = TRUE) ~ "Paired Progression",
+        grepl("naïve|naive",  as.character(`Cohort ID`), ignore.case = TRUE) ~ "Naïve",
+        TRUE ~ as.character(`Cohort ID`)
+      ),
+      ST_sections = suppressWarnings(as.integer(`ST_section Number`)),
+      SM_sections = suppressWarnings(as.integer(`SM_Section Number`)),
+      serial      = grepl("^yes$", trimws(tolower(as.character(`ST_SM_Serial Sections`))))
+    ) %>%
+    dplyr::mutate(
+      ST_sections = ifelse(is.na(ST_sections), 0L, ST_sections),
+      SM_sections = ifelse(is.na(SM_sections), 0L, SM_sections),
+      Patient       = trimws(as.character(Patient)),
+      Patient_clean = sub("(-[0-9]+)(-[0-9]+)$", "\\1", 
+                          regmatches(Patient, regexpr("^[A-Za-z]+-[0-9]+(?:-[0-9]+)?", Patient, perl = TRUE))),
+      PatientBase   = ifelse(
+                          grepl("^[A-Za-z]+-[0-9]+-[0-9]+$", Patient_clean),
+                          sub("-[0-9]+$", "", Patient_clean),   # "A-5-1" → "A-5"
+                          Patient_clean                          # "A-1"   → "A-1"
+                        )
+    ) %>%
+    dplyr::select(
+      Patient, Patient_clean, PatientBase,
+      GL_ID,
+      Cohort, Diagnosis, Grade,
+      Surgery, Sex, Age = `Age at surgery`,
+      Chemo, Radiotherapy, snRNA, snATAC,
+      
+      ST, ST_sections,
+      SM, SM_sections,
+      serial
+    ) %>%
+    dplyr::distinct()
+
+  return(df)
+}
+
+# ---- Methylation (De Souza G-CIMP) classification --------------------------
+# Joined onto the cohort by GL_ID. In Cohorts_v6 the GL_ID column carries
+# timepoint suffixes (e.g. GL0110-2, GL0048-1) that match gl_id here exactly.
+read_methylation <- function(path, sheet = "gcimp_classification_results") {
+  meth <- readxl::read_excel(path, sheet = sheet, .name_repair = "unique")
+  colnames(meth) <- trimws(colnames(meth))
+
+  meth %>%
+    dplyr::transmute(
+      GL_ID       = trimws(as.character(gl_id)),
+      Methylation = dplyr::case_when(
+        grepl("high", as.character(desouza_signature_class), ignore.case = TRUE) ~ "G-CIMP-high",
+        grepl("low",  as.character(desouza_signature_class), ignore.case = TRUE) ~ "G-CIMP-low",
+        TRUE ~ NA_character_
+      )
+    ) %>%
+    dplyr::filter(!is.na(GL_ID), GL_ID != "") %>%
+    dplyr::distinct(GL_ID, .keep_all = TRUE)
+}
+
+data_dir <- "/stornext/Bioinf/data/lab_brain_cancer/projects/tme_spatial/venture_multi_omics"
+
+df <- read_cohort_excel(file.path(data_dir, "Venture_Paper_Cohorts_7.xlsx"))
+
+meth <- read_methylation(file.path(data_dir, "venture_desouza_gcimp_classification.xlsx"))
+
+# Left-join so cohort samples without methylation data keep an NA (rendered
+# grey via na.value in the tile rows).
+df <- df %>%
+  dplyr::mutate(GL_ID = trimws(as.character(GL_ID))) %>%
+  dplyr::left_join(meth, by = "GL_ID")
+
+message("Methylation matched: ",
+        sum(!is.na(df$Methylation)), " / ", nrow(df), " samples")
+```
+
+
+```{r}
+# Add this right after colnames(raw)[1] <- "TRU_ID"
+#colnames(raw) <- trimws(colnames(raw))  # strip leading/trailing spaces from ALL column names
+```
+
+```{r palettes}
+patient_levels <- df %>%
+  dplyr::distinct(PatientBase) %>%
+  dplyr::arrange(PatientBase) %>%
+  dplyr::pull(PatientBase)
+
+base_cols <- c(
+  RColorBrewer::brewer.pal(8, "Set1"),
+  RColorBrewer::brewer.pal(8, "Dark2"),
+  RColorBrewer::brewer.pal(8, "Set2"),
+  RColorBrewer::brewer.pal(8, "Accent")
+)
+base_cols <- base_cols[!base_cols %in% c("#FFFFFF", "#F0F0F0", "#BEBEBE")]
+
+n   <- length(patient_levels)
+idx <- order(seq(1, n) %% ceiling(n / 4) * 4 + seq(1, n) %/% ceiling(n / 4))
+patient_cols <- setNames(base_cols[seq_len(n)][idx], patient_levels)
+
+diag_cols    <- c("IDH-A" = "#76B7B2", "IDH-O" = "#EDC948")
+
+grade_cols   <- c("2" = "#E8DAEF", "3" = "#8E44AD", "4" = "#4A235A")
+
+# Magenta/pink — a hue used by no other track (Grade is purple), so the
+# methylation row reads distinctly. Dark = high, light = low.
+meth_cols    <- c("G-CIMP-high" = "#AD1457", "G-CIMP-low" = "#F48FB1")
+
+surgery_cols <- c(
+  "Initial"    = "#A9DFBF",
+  "Initial_Treated"      = "#27AE60",
+  "Subsequent_Untreated" = "#1E8449",
+  "Subsequent_Treated"   = "#0B5345"
+)
+
+chemo_cols <- c(
+  "No"          = "#FDF5E6",
+  "TMZ"         = "#FAD7A0",
+  "TMZ+Bev"     = "#E59866",
+  "Vorasidenib" = "#CA6F1E",
+  "Safusidenib" = "#784212"
+)
+
+radio_cols <- c("No" = "#FDEDEC", "Yes" = "#E74C3C")
+
+yn_cols    <- c("No" = "#EBF5FB", "Yes" = "#2471A3")
+```
+
+```{r helpers}
+make_row <- function(data, var, fill_map, label) {
+  n_tiles <- nrow(data)
+  vals    <- unique(data[[var]]); vals <- vals[!is.na(vals)]
+  missing <- setdiff(vals, names(fill_map))
+  if (length(missing) > 0)
+    fill_map <- c(fill_map, setNames(rep("grey80", length(missing)), missing))
+
+  ggplot(data, aes(x = x, y = 1, fill = .data[[var]])) +
+    geom_tile(color = "white", linewidth = 0.3) +
+    scale_fill_manual(values = fill_map, name = label,
+                      na.value = "grey90", drop = FALSE) +
+    scale_x_continuous(expand = c(0, 0)) +
+    scale_y_continuous(expand = c(0, 0)) +
+    theme_void() +
+    theme(aspect.ratio    = 1 / n_tiles,
+          legend.position = "right",
+          legend.title    = element_text(size = 7, face = "bold"),
+          legend.text     = element_text(size = 6),
+          legend.key.width  = unit(0.35, "cm"),
+          legend.key.height = unit(0.35, "cm"),
+          plot.margin     = margin(2, 2, 2, 80))
+}
+
+make_row_sectioned <- function(data, var, fill_map, label, section_var) {
+  n_tiles <- nrow(data)
+  vals    <- unique(data[[var]]); vals <- vals[!is.na(vals)]
+  missing <- setdiff(vals, names(fill_map))
+  if (length(missing) > 0)
+    fill_map <- c(fill_map, setNames(rep("grey80", length(missing)), missing))
+
+  ggplot(data, aes(x = x, y = 1, fill = .data[[var]])) +
+    geom_tile(color = "white", linewidth = 0.3) +
+    scale_fill_manual(values = fill_map, name = label,
+                      na.value = "grey90", drop = FALSE) +
+    scale_x_continuous(expand = c(0, 0)) +
+    scale_y_continuous(expand = c(0, 0)) +
+    theme_void() +
+    theme(aspect.ratio    = 1 / n_tiles,
+          legend.position = "right",
+          legend.title    = element_text(size = 7, face = "bold"),
+          legend.text     = element_text(size = 6),
+          legend.key.width  = unit(0.35, "cm"),
+          legend.key.height = unit(0.35, "cm"),
+          plot.margin     = margin(2, 2, 2, 80))
+}
+
+add_ylabel <- function(p, label) {
+  p + labs(y = label) +
+    theme(
+      axis.title.y = element_text(size = 8, face = "bold", angle = 0,
+                                  hjust = 1, vjust = 0.5, color = "grey20"),
+      axis.title.x = element_blank()
+    )
+}
+```
+
+```{r build-plot}
+# Sort by modality completeness, then cohort narrative order, then PatientBase.
+# Tier 1: full multi-omics (ST+SM+snRNA) — VENTURE then AnHeart
+# Tier 2: ST+snRNA (no SM)
+# Tier 3: ST+SM (no snRNA)
+# Tier 4: ST only — Longitudinal timepoints, Paired Progression, Naïve pairs
+# Tier 5: snRNA only
+# Tier 6: no modalities (clinical-only)
+# PatientBase alpha within each cell keeps longitudinal/paired samples adjacent.
+df <- df %>%
+  dplyr::mutate(
+    .modality_tier = dplyr::case_when(
+      ST == "Yes" & SM == "Yes" & snRNA == "Yes" ~ 1L,
+      ST == "Yes" & snRNA == "Yes"               ~ 2L,
+      ST == "Yes" & SM == "Yes"                  ~ 3L,
+      ST == "Yes"                                ~ 4L,
+      snRNA == "Yes"                             ~ 5L,
+      TRUE                                       ~ 6L
+    ),
+    .cohort_order = dplyr::case_when(
+      Cohort == "VENTURE"                                  ~ 1L,
+      Cohort == "AnHeart"                                  ~ 2L,
+      Cohort == "Longitudinal"                             ~ 3L,
+      Cohort == "Paired Progression"                       ~ 4L,
+      grepl("naïve|naive", Cohort, ignore.case = TRUE) ~ 5L,
+      TRUE                                                 ~ 6L
+    )
+  ) %>%
+  dplyr::arrange(.modality_tier, .cohort_order, PatientBase) %>%
+  dplyr::select(-.modality_tier, -.cohort_order) %>%
+  dplyr::mutate(x = seq_len(dplyr::n()))
+
+# Row specs — section_var drives subdivision for ST and SM
+rows_spec <- list(
+  list(var = "PatientBase",  map = patient_cols,  label = "Patient",              section_var = NULL),
+  list(var = "Diagnosis",    map = diag_cols,      label = "Diagnosis",            section_var = NULL),
+  list(var = "Grade",        map = grade_cols,     label = "Grade",                section_var = NULL),
+  list(var = "Methylation",  map = meth_cols,      label = "Methylation (G-CIMP)", section_var = NULL),
+  list(var = "Surgery",      map = surgery_cols,   label = "Surgery",              section_var = NULL),
+  list(var = "Chemo",        map = chemo_cols,     label = "Treatment",            section_var = NULL),
+  list(var = "Radiotherapy", map = radio_cols,     label = "Radiotherapy",         section_var = NULL),
+  list(var = "ST",           map = yn_cols,        label = "Xenium ST",            section_var = "ST_sections"),
+  list(var = "SM",           map = yn_cols,        label = "Spatial Metabolomics", section_var = "SM_sections"),
+  list(var = "snRNA",        map = yn_cols,        label = "snRNA-seq",            section_var = NULL),
+  list(var = "snATAC",       map = yn_cols,        label = "snATAC",               section_var = NULL)
+)
+
+rows <- lapply(rows_spec, function(s) {
+  p <- if (!is.null(s$section_var)) {
+    make_row_sectioned(df, s$var, s$map, s$label, s$section_var)
+  } else {
+    make_row(df, s$var, s$map, s$label)
+  }
+  add_ylabel(p, s$label)
+})
+
+# Patient label row — x is pre-assigned in df
+p_labels <- ggplot(df, aes(x = x, y = 1, label = Patient)) +
+  geom_text(size = 2.2, angle = 45, hjust = 0, vjust = 0.5, color = "grey20") +
+  scale_x_continuous(expand = c(0, 0), limits = c(0.5, nrow(df) + 0.5)) +
+  scale_y_continuous(limits = c(0.8, 2)) +
+  theme_void() +
+  theme(plot.margin = margin(0, 2, 0, 80))
+
+# Strip legends from individual rows
+rows_no_legend <- lapply(rows, function(p) p + theme(legend.position = "none"))
+
+# aspect.ratio = 1/N in each tile row forces square panels.
+# Figure dimensions are computed from tile_size so ggsave matches.
+# 82pt left margin + 2pt right = 1.14"; legend takes 3/13 of total width.
+tile_size      <- 0.4   # inches per tile — adjust to scale the whole figure
+n_patients     <- nrow(df)
+n_tile_rows    <- length(rows_spec)
+label_tiles    <- 3     # height of patient-label row in tile units
+heights_vec    <- c(label_tiles, rep(1, n_tile_rows))
+fig_width      <- (n_patients * tile_size + 1.14) * (13 / 10)
+fig_height     <- tile_size * sum(heights_vec) + 1.1   # +1.1 for title/caption/margins
+
+main_plot <- wrap_plots(c(list(p_labels), rows_no_legend), ncol = 1,
+                        heights = heights_vec) +
+  plot_annotation(
+    title   = "VENTURE Cohort — Sample Overview",
+    caption = "IDH-A: IDH-mutant Astrocytoma  |  IDH-O: IDH-mutant Oligodendroglioma",
+    theme   = theme(
+      plot.title   = element_text(size = 12, face = "bold", hjust = 0.5),
+      plot.caption = element_text(size = 7, color = "grey50", hjust = 0.5)
+    )
+  )
+
+# Build legend panel (exclude Patient — too many levels)
+legend_df <- dplyr::bind_rows(lapply(rows_spec, function(s) {
+  if (s$label == "Patient") return(NULL)
+  lvls <- names(s$map)
+  data.frame(
+    group = factor(s$label, levels = sapply(rows_spec, `[[`, "label")),
+    level = factor(lvls, levels = lvls),
+    color = unname(s$map[lvls]),
+    stringsAsFactors = FALSE
+  )
+}))
+
+legend_df$fill_id <- paste(legend_df$group, legend_df$level, sep = "::")
+all_colors        <- setNames(legend_df$color, legend_df$fill_id)
+
+legend_panel <- ggplot(legend_df, aes(x = 0.15, y = level)) +
+  # shape 22 = filled square with absolute size, so keys stay square regardless
+  # of how the facet panels stretch (geom_tile keys took the panel aspect ratio)
+  geom_point(aes(fill = fill_id), shape = 22, size = 4,
+             color = "white", stroke = 0.3) +
+  geom_text(aes(x = 0.32, label = as.character(level)),
+            hjust = 0, size = 2.8, color = "grey15") +
+  scale_fill_manual(values = all_colors, guide = "none") +
+  scale_x_continuous(limits = c(0, 1.5), expand = c(0, 0)) +
+  facet_wrap(~ group, ncol = 1, scales = "free_y", strip.position = "left") +
+  theme_void() +
+  theme(
+    strip.text.y.left = element_text(size = 8, face = "bold", angle = 0,
+                                     hjust = 1, color = "grey10",
+                                     margin = margin(r = 4)),
+    strip.placement = "outside",
+    panel.spacing   = unit(0.25, "cm"),
+    plot.margin     = margin(4, 4, 4, 4)
+  )
+
+# Final assembly
+final_plot <- (main_plot | legend_panel) +
+  plot_layout(widths = c(10, 3))
+
+# Save
+ggsave("/vast/projects/BCRL_Multi_Omics/venture_cohort_fig1_092026.pdf", final_plot,
+       width = fig_width, height = fig_height, units = "in", device = cairo_pdf)
+ggsave("/vast/projects/BCRL_Multi_Omics/venture_cohort_fig1_092026.png", final_plot,
+       width = fig_width, height = fig_height, units = "in", dpi = 300)
+
+print(final_plot)
+```
+
+#

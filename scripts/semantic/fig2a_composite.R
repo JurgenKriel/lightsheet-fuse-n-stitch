@@ -76,25 +76,15 @@ p_name <- ggplot(comp, aes(0, fct_rev(nn))) +
   labs(title = "Niche") +
   bare + theme(axis.text.x = element_blank())
 
-# ---- 2. abundance: a battery-charge gauge -------------------------------------------
-# N_AB segments per niche, filled in proportion to abundance / the largest abundance, so
-# the fullest niche reads as a full battery. Anything non-zero keeps at least one segment.
-N_AB <- 10
-
-ab_blocks <- comp %>%
-  mutate(lit = pmax(ifelse(abundance > 0, 1, 0),
-                    round(N_AB * abundance / max(abundance)))) %>%
-  tidyr::expand(nesting(nn, lit), slot = 1:N_AB) %>%
-  mutate(on = slot <= lit)
-
-p_ab <- ggplot(ab_blocks, aes(slot, fct_rev(nn))) +
-  geom_tile(aes(fill = ifelse(on, as.character(nn), NA_character_)),
-            colour = "grey55", linewidth = 0.3, width = 0.82, height = 0.62) +
-  scale_fill_manual(values = NCOL, na.value = "white", guide = "none") +
-  scale_x_continuous(breaks = c(1, N_AB), labels = c("0", "max"),
-                     expand = expansion(add = 0.5)) +
-  labs(title = "Abundance", subtitle = sprintf("share of a specimen (n/%d)", N_AB)) +
-  bare + theme(plot.subtitle = element_text(size = 8, colour = "grey40"))
+# ---- 2. abundance bar ---------------------------------------------------------------
+p_ab <- ggplot(comp, aes(abundance, fct_rev(nn), fill = nn)) +
+  geom_col(width = 0.62) +
+  scale_fill_manual(values = NCOL, guide = "none") +
+  scale_x_continuous(breaks = c(0, max(comp$abundance)), labels = c("0", "max"),
+                     expand = expansion(mult = c(0, 0.04))) +
+  labs(title = "Abundance", subtitle = "mean share of a specimen") +
+  bare + theme(axis.text.x = element_text(size = 8, colour = "grey40"),
+               plot.subtitle = element_text(size = 8, colour = "grey40"))
 
 # ---- 3. prevalence blocks: one square per specimen, filled = carries the niche -------
 blocks <- comp %>%

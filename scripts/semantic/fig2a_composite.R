@@ -158,10 +158,11 @@ p_dn <- ggplot(dens, aes(1, fct_rev(nn))) +
   # Tinted with the niche colour, so the balls echo the swatch column without a second
   # palette -- the ring stays neutral and size still carries the number.
   ggshadow::geom_glowpoint(aes(size = density, shadowcolour = nn), shape = 16,
-                           colour = "grey50", alpha = 0,
+                           colour = "grey50", alpha = 0.01,
                            shadowalpha = 0.30, shadowsize = 1.0) +
   ggshadow::scale_shadowcolour_manual(values = NCOL, guide = "none") +
-  geom_point(aes(size = density), shape = 21, fill = NA, colour = "grey35", stroke = 0.7) +
+  geom_point(aes(size = density), shape = 21, fill = "#FFFFFF03", colour = "grey35",
+             stroke = 0.7) +
   # spread over the OBSERVED range (9.1-13.2), not from zero: area-proportional sizing
   # makes eight balls that differ by <1.5x look identical. Read it as a ranking, not a ratio.
   scale_size(range = c(2.4, 4.4), name = "mean cells\nper hexbin",

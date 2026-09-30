@@ -154,11 +154,14 @@ stopifnot(nrow(dens) == length(NORDER))
 # halo, both scaled by density. No viridis and no niche fill, so the column adds a third
 # encoding without competing with the palette carrying identity elsewhere in the figure.
 p_dn <- ggplot(dens, aes(1, fct_rev(nn))) +
-  # one tight halo under the ring: wider or softer and the eight rows smear into a band
-  ggshadow::geom_glowpoint(aes(size = density), shape = 16, colour = "grey50",
-                           alpha = 0, shadowcolour = "grey50",
-                           shadowalpha = 0.09, shadowsize = 1.18) +
-  geom_point(aes(size = density), shape = 21, fill = NA, colour = "grey30", stroke = 0.7) +
+  # one tight halo under the ring: wider or softer and the eight rows smear into a band.
+  # Tinted with the niche colour, so the balls echo the swatch column without a second
+  # palette -- the ring stays neutral and size still carries the number.
+  ggshadow::geom_glowpoint(aes(size = density, shadowcolour = nn), shape = 16,
+                           colour = "grey50", alpha = 0,
+                           shadowalpha = 0.20, shadowsize = 1.3) +
+  ggshadow::scale_shadowcolour_manual(values = NCOL, guide = "none") +
+  geom_point(aes(size = density), shape = 21, fill = NA, colour = "grey35", stroke = 0.7) +
   # spread over the OBSERVED range (9.1-13.2), not from zero: area-proportional sizing
   # makes eight balls that differ by <1.5x look identical. Read it as a ranking, not a ratio.
   scale_size(range = c(2.6, 6.2), name = "mean cells\nper hexbin",

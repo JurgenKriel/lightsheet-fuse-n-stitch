@@ -159,12 +159,12 @@ p_dn <- ggplot(dens, aes(1, fct_rev(nn))) +
   # palette -- the ring stays neutral and size still carries the number.
   ggshadow::geom_glowpoint(aes(size = density, shadowcolour = nn), shape = 16,
                            colour = "grey50", alpha = 0,
-                           shadowalpha = 0.28, shadowsize = 0.6) +
+                           shadowalpha = 0.30, shadowsize = 1.0) +
   ggshadow::scale_shadowcolour_manual(values = NCOL, guide = "none") +
   geom_point(aes(size = density), shape = 21, fill = NA, colour = "grey35", stroke = 0.7) +
   # spread over the OBSERVED range (9.1-13.2), not from zero: area-proportional sizing
   # makes eight balls that differ by <1.5x look identical. Read it as a ranking, not a ratio.
-  scale_size(range = c(2.6, 5.0), name = "mean cells\nper hexbin",
+  scale_size(range = c(2.4, 4.4), name = "mean cells\nper hexbin",
              breaks = c(9, 11, 13), limits = c(9, 13.3)) +
   scale_x_continuous(limits = c(0.55, 1.45), breaks = NULL, expand = c(0, 0)) +
   labs(title = "Density", subtitle = "mean cells per hexbin") +
@@ -223,8 +223,8 @@ fig <- p_name + p_ab + p_dn + p_pv + p_pr + p_dot +
   plot_annotation(title = "Figure 2A — niche summary",
                   theme = theme(plot.title = element_text(face = "bold", size = 13)))
 
-ggsave(file.path(RES, "Fig2A.svg"), fig, device = svglite::svglite, width = 15, height = 5.4)
-ggsave(file.path(RES, "Fig2A.png"), fig, width = 15, height = 5.4, dpi = 200)
+ggsave(file.path(RES, "Fig2A.svg"), fig, device = svglite::svglite, width = 15, height = 6.0)
+ggsave(file.path(RES, "Fig2A.png"), fig, width = 15, height = 6.0, dpi = 200)
 cat("wrote", file.path(RES, c("Fig2A.svg", "Fig2A.png")), sep = "\n  "); cat("\n\n")
 
 print(comp %>% left_join(prev, by = "niche") %>% left_join(dens, by = "niche") %>%

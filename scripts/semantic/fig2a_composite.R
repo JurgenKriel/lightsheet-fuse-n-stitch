@@ -101,25 +101,10 @@ MIN_HEX <- 40
 NUM2OLD <- c("0"="T_LE","1"="T_AMN","2"="T_P","3"="V","4"="T_A","5"="T_M",
              "6"="I","7"="N","8"="T_TC","9"="T_O","10"="T_OM","11"="T_AA")
 
-# sf_hex$patient is really a SECTION id, and patients contribute unequal numbers of them
-# (GX0008 x4, LGG-A/B/C and GL0043/48/97/184 x2, ven5 + ven5.2). Counting sections lets the
-# more heavily sectioned patients vote several times, so collapse to one vote per patient.
-section_to_patient <- function(s) {
-  s <- as.character(s)
-  dplyr::case_when(grepl("^GL[0-9]+", s) ~ sub("^(GL[0-9]+).*", "\\1", s),
-                   grepl("^GX",       s) ~ "GX0008",
-                   grepl("^LGG",      s) ~ sub("^(LGG-[A-Z]).*", "\\1", s),
-                   grepl("^ven",      s) ~ sub("^(ven[0-9]+).*", "\\1", s),
-                   TRUE                  ~ s)
-}
-
 sf_hex <- readRDS(SF_HEX)
-tb     <- table(sf_hex$patient, sf_hex$niche)          # section x cluster
-# a patient carries the niche if ANY of its sections clears MIN_HEX. Pooling the sections
-# first would let thin scatter across several sections add up to a "present" call.
-by_pat <- rowsum((tb >= MIN_HEX) * 1, section_to_patient(rownames(tb))) > 0
-N_PAT  <- nrow(by_pat)                                 # 15 patients, from 26 sections
-hits   <- colSums(by_pat)
+tb     <- table(sf_hex$patient, sf_hex$niche)
+N_PAT  <- nrow(tb)                          # 26 sections, as in the old script
+hits   <- colSums(tb >= MIN_HEX)
 
 prev <- tibble(cluster = names(hits), n_pat = as.integer(hits)) %>%
   mutate(niche = unname(REN[NUM2OLD[cluster]]),        # cluster id -> old code -> new name
@@ -134,7 +119,7 @@ pv_blocks <- prev %>%
 
 p_pv <- ggplot(pv_blocks, aes(slot, fct_rev(nn))) +
   geom_tile(aes(fill = ifelse(on, as.character(nn), NA_character_)),
-            colour = "grey55", linewidth = 0.25, width = 0.8, height = 0.62) +
+            colour = "grey60", linewidth = 0.2, width = 0.52, height = 0.6) +
   scale_fill_manual(values = NCOL, na.value = "white", guide = "none") +
   scale_x_continuous(breaks = NULL, expand = expansion(add = 0.5)) +
   labs(title = "Prevalence",
@@ -165,15 +150,24 @@ dens <- read_csv(DENS_CSV, show_col_types = FALSE) %>%
   mutate(nn = factor(niche, levels = NORDER))
 stopifnot(nrow(dens) == length(NORDER))
 
-p_dn <- ggplot(dens, aes(density, fct_rev(nn), fill = nn)) +
-  geom_col(width = 0.62) +
-  scale_fill_manual(values = NCOL, guide = "none") +
-  scale_x_continuous(breaks = c(0, max(dens$density)),
-                     labels = c("0", sprintf("%.0f", max(dens$density))),
-                     expand = expansion(mult = c(0, 0.04))) +
+# Kept as the old script's glow balls, but uncoloured: an unfilled grey ring with a soft
+# halo, both scaled by density. No viridis and no niche fill, so the column adds a third
+# encoding without competing with the palette carrying identity elsewhere in the figure.
+p_dn <- ggplot(dens, aes(1, fct_rev(nn))) +
+  # one tight halo under the ring: wider or softer and the eight rows smear into a band
+  ggshadow::geom_glowpoint(aes(size = density), shape = 16, colour = "grey50",
+                           alpha = 0, shadowcolour = "grey50",
+                           shadowalpha = 0.09, shadowsize = 1.18) +
+  geom_point(aes(size = density), shape = 21, fill = NA, colour = "grey30", stroke = 0.7) +
+  # spread over the OBSERVED range (9.1-13.2), not from zero: area-proportional sizing
+  # makes eight balls that differ by <1.5x look identical. Read it as a ranking, not a ratio.
+  scale_size(range = c(2.6, 6.2), name = "mean cells\nper hexbin",
+             breaks = c(9, 11, 13), limits = c(9, 13.3)) +
+  scale_x_continuous(limits = c(0.55, 1.45), breaks = NULL, expand = c(0, 0)) +
   labs(title = "Density", subtitle = "mean cells per hexbin") +
-  bare + theme(axis.text.x = element_text(size = 8, colour = "grey40"),
-               plot.subtitle = element_text(size = 8, colour = "grey40"))
+  bare + theme(plot.subtitle = element_text(size = 8, colour = "grey40"),
+               legend.position = "bottom", legend.title = element_text(size = 8),
+               legend.text = element_text(size = 7.5), legend.key.size = unit(0.6, "lines"))
 
 # ---- 4. transcriptional program text ------------------------------------------------
 p_pr <- ggplot(comp, aes(0, fct_rev(nn))) +
@@ -222,7 +216,7 @@ p_dot <- ggplot(comb, aes(set, fct_rev(nn))) +
 
 # ---- assemble -----------------------------------------------------------------------
 fig <- p_name + p_ab + p_dn + p_pv + p_pr + p_dot +
-  plot_layout(nrow = 1, widths = c(0.62, 0.75, 0.75, 1.05, 1.15, 3.0)) +
+  plot_layout(nrow = 1, widths = c(0.62, 0.75, 0.6, 1.0, 1.15, 3.0)) +
   plot_annotation(title = "Figure 2A — niche summary",
                   theme = theme(plot.title = element_text(face = "bold", size = 13)))
 

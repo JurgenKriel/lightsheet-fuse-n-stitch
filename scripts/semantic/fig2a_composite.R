@@ -88,13 +88,13 @@ p_ab <- ggplot(comp, aes(abundance, fct_rev(nn), fill = nn)) +
   bare + theme(axis.text.x = element_text(size = 8, colour = "grey40"),
                plot.subtitle = element_text(size = 8, colour = "grey40"))
 
-# ---- 3. prevalence bar ---------------------------------------------------------------
+# ---- 3. prevalence blocks -------------------------------------------------------------
 # Scored exactly as scripts/figures/niche_prev_density_code.r did for the donut version:
 #   colSums(table(patient, niche) >= MIN_HEX) / n_patients
 # i.e. a niche counts towards a patient only once it holds at least MIN_HEX hexbins there,
 # which is why this is lower than "has any cells at all" -- a few stray hexbins no longer
 # make a niche present. Same hexbin object as that script, so the numbers match the old
-# figure; only the mark changes, donuts -> bars.
+# figure; only the mark changes, donuts -> one block per patient.
 MIN_HEX <- 40
 NUM2OLD <- c("0"="T_LE","1"="T_AMN","2"="T_P","3"="V","4"="T_A","5"="T_M",
              "6"="I","7"="N","8"="T_TC","9"="T_O","10"="T_OM","11"="T_AA")
@@ -111,17 +111,18 @@ prev <- tibble(cluster = names(hits), n_pat = as.integer(hits)) %>%
   mutate(nn = factor(niche, levels = NORDER))
 stopifnot(nrow(prev) == length(NORDER))
 
-p_pv <- ggplot(prev, aes(prevalence, fct_rev(nn), fill = nn)) +
-  geom_col(width = 0.62) +
-  scale_fill_manual(values = NCOL, guide = "none") +
-  # the 0 tick is left unlabelled: it would collide with the abundance axis's "max"
-  scale_x_continuous(limits = c(0, 1), breaks = c(0, 0.5, 1),
-                     labels = c("", "50%", "100%"), expand = expansion(mult = c(0, 0.02))) +
+pv_blocks <- prev %>%
+  tidyr::expand(nesting(nn, n_pat), slot = 1:N_PAT) %>%
+  mutate(on = slot <= n_pat)
+
+p_pv <- ggplot(pv_blocks, aes(slot, fct_rev(nn))) +
+  geom_tile(aes(fill = ifelse(on, as.character(nn), NA_character_)),
+            colour = "grey55", linewidth = 0.25, width = 0.8, height = 0.62) +
+  scale_fill_manual(values = NCOL, na.value = "white", guide = "none") +
+  scale_x_continuous(breaks = NULL, expand = expansion(add = 0.5)) +
   labs(title = "Prevalence",
        subtitle = sprintf("patients with ≥%d hexbins (n/%d)", MIN_HEX, N_PAT)) +
-  bare + theme(axis.text.x = element_text(size = 8, colour = "grey40"),
-               plot.subtitle = element_text(size = 8, colour = "grey40"),
-               panel.grid.major.x = element_line(colour = "grey92"))
+  bare + theme(plot.subtitle = element_text(size = 8, colour = "grey40"))
 
 # ---- 4. transcriptional program text ------------------------------------------------
 p_pr <- ggplot(comp, aes(0, fct_rev(nn))) +
@@ -170,7 +171,7 @@ p_dot <- ggplot(comb, aes(set, fct_rev(nn))) +
 
 # ---- assemble -----------------------------------------------------------------------
 fig <- p_name + p_ab + p_pv + p_pr + p_dot +
-  plot_layout(nrow = 1, widths = c(0.62, 0.8, 0.9, 1.15, 3.0)) +
+  plot_layout(nrow = 1, widths = c(0.62, 0.8, 1.55, 1.15, 3.0)) +
   plot_annotation(title = "Figure 2A — niche summary",
                   theme = theme(plot.title = element_text(face = "bold", size = 13)))
 

@@ -1,0 +1,337 @@
+---
+title: "Figure 2A — niche summary"
+author: "BCRL Multi-Omics"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+    fig_width: 15
+params:
+  results_dir: "results"
+  fdr: 0.05
+  # --- prevalence ---------------------------------------------------------------
+  min_hex: 40           # hexbins a niche needs in a section before it counts as present
+  block_width: 0.52     # prevalence block width (1 = blocks touch)
+  block_height: 0.6
+  # --- density glow -------------------------------------------------------------
+  ball_min: 2.4         # ring diameter (mm) for the least dense niche
+  ball_max: 4.4         # ...and for the densest
+  glow_size: 1.0        # mm ADDED around the ring -- not a multiplier. > ~1.2 and
+                        # neighbouring halos touch at the current figure height
+  glow_alpha: 0.30
+  # --- pathway dots -------------------------------------------------------------
+  dot_ns: 2.8           # dot diameter for n.s.
+  dot_sig: 6.5          # ...and for FDR < fdr
+  # --- layout -------------------------------------------------------------------
+  fig_width: 15
+  fig_height: 6.0
+  widths: !r c(0.62, 0.75, 0.6, 1.0, 1.15, 3.0)   # niche, abundance, density, prevalence, program, dots
+  save: TRUE            # FALSE while tuning: preview only, nothing written to results/
+---
+
+Tuning copy of `fig2a_composite.R`. Same inputs and same numbers — every knob I would
+otherwise edit in the script is a `param` above, and each panel prints on its own so you can
+re-knit one chunk at a time. Set `save: FALSE` to preview without overwriting `results/Fig2A.*`.
+
+Built to `Fig2A_concept.svg`: niche swatch, abundance bar, density glow balls, prevalence
+blocks, transcriptional program, and the ROS + signalling scores as dots.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, dev = "png", dpi = 150)
+suppressMessages({
+  library(ggplot2); library(dplyr); library(readr); library(forcats); library(tidyr)
+  library(patchwork)
+})
+RES <- params$results_dir
+FDR <- params$fdr
+# hexbin object behind the old prevalence donuts (scripts/figures/niche_prev_density_code.r)
+SF_HEX  <- "/vast/projects/BCRL_Multi_Omics/scripts/figures/sf_hex.rds"
+# cell-level object behind the old density panel; only read when the density cache is absent
+VEN_ALL <- "/vast/projects/BCRL_Multi_Omics/scripts/figures/ven_all.rds"
+```
+
+## Palette, order and labels
+
+`NORDER` sets the row order top to bottom — reorder it and every panel follows. `PROGRAM` is
+transcribed from the concept SVG and is **not** in any results CSV, so check it against the
+semantic modules before publishing.
+
+```{r constants}
+REN <- c(T_A="T-ROS", T_TC="T-PAN", T_P="T-P", T_AA="T-AC", T_AMN="T-MES", T_LE="T-OC",
+         T_OM="T-GL", T_O="T-MET2", T_M="T-MET1", I="I", V="V", N="N")
+NICHE_COLORS_OLD <- c(T_LE="#9FCF87", T_AMN="#94FFB5", T_P="#9068AC", V="#F77800",
+                      T_A="#FFCC99", T_M="#2BCE48", I="#C39C94", N="#005C31",
+                      T_TC="#0075DC", T_O="#F0A0FF", T_OM="#C20088", T_AA="#4C005C")
+NCOL <- setNames(unname(NICHE_COLORS_OLD), unname(REN[names(NICHE_COLORS_OLD)]))
+
+NORDER <- c("T-AC","T-PAN","T-MES","T-MET2","T-MET1","T-P","T-ROS","T-GL")
+
+PROGRAM <- c("T-ROS"  = "mRNA processing, chromatin",
+             "T-MES"  = "Cilium assembly, SUMOylation",
+             "T-P"    = "Mitosis, G2M checkpoint",
+             "T-GL"   = "mRNA splicing, chromatin",
+             "T-AC"   = "Cholesterol, gap junctions",
+             "T-PAN"  = "Synaptic transmission",
+             "T-MET1" = "Synaptic vesicle clustering",
+             "T-MET2" = "Catecholamine, serotonin uptake")
+
+theme_set(theme_minimal(base_size = 11))
+# the columns share one y axis; only the first panel prints the niche names
+bare <- theme(panel.grid = element_blank(),
+              axis.title = element_blank(),
+              axis.text.y = element_blank(),
+              axis.ticks = element_blank(),
+              plot.title = element_text(size = 10, hjust = 0, face = "plain"),
+              plot.margin = margin(4, 6, 4, 6))
+```
+
+## Abundance — mean share of a specimen
+
+Absences count as 0, so a niche confined to a few sections does not outrank one found
+everywhere. Averaging only over the samples where a niche occurs puts T-MES top instead.
+
+```{r composition}
+cd <- read_csv(file.path(RES, "aggregated_filtered_coldata.csv"), show_col_types = FALSE) %>%
+  transmute(patient, niche = gsub("_", "-", niche), ncells) %>%
+  group_by(patient, niche) %>% summarise(ncells = sum(ncells), .groups = "drop")
+
+N_SPEC <- n_distinct(cd$patient)
+
+comp <- cd %>%
+  group_by(patient) %>% mutate(frac = ncells / sum(ncells)) %>% ungroup() %>%
+  complete(patient, niche, fill = list(ncells = 0, frac = 0)) %>%
+  filter(niche %in% NORDER) %>%
+  group_by(niche) %>%
+  summarise(abundance = mean(frac), n_spec = sum(ncells > 0), .groups = "drop") %>%
+  mutate(nn = factor(niche, levels = NORDER))
+comp %>% arrange(desc(abundance)) %>% mutate(abundance = sprintf("%.1f%%", 100 * abundance))
+```
+
+## Prevalence — the old donut figure's rule
+
+`colSums(table(section, niche) >= min_hex) / n_sections`, exactly as
+`scripts/figures/niche_prev_density_code.r` scored it: a niche counts for a section only once
+it holds at least `params$min_hex` hexbins there. The 26 ids are **sections**, not patients —
+collapsing them to 15 patients is one `rowsum()` away if you ever want one vote per patient.
+
+```{r prevalence}
+MIN_HEX <- params$min_hex
+NUM2OLD <- c("0"="T_LE","1"="T_AMN","2"="T_P","3"="V","4"="T_A","5"="T_M",
+             "6"="I","7"="N","8"="T_TC","9"="T_O","10"="T_OM","11"="T_AA")
+
+sf_hex <- readRDS(SF_HEX)
+tb     <- table(sf_hex$patient, sf_hex$niche)
+N_PAT  <- nrow(tb)
+hits   <- colSums(tb >= MIN_HEX)
+
+prev <- tibble(cluster = names(hits), n_pat = as.integer(hits)) %>%
+  mutate(niche = unname(REN[NUM2OLD[cluster]]),   # cluster id -> old code -> new name
+         prevalence = n_pat / N_PAT) %>%
+  filter(!is.na(niche), niche %in% NORDER) %>%    # drops the "white" background class
+  mutate(nn = factor(niche, levels = NORDER))
+stopifnot(nrow(prev) == length(NORDER))
+prev %>% arrange(desc(prevalence)) %>% transmute(niche, n = sprintf("%d/%d", n_pat, N_PAT))
+```
+
+## Density — mean cells per hexbin
+
+The other half of the old script: each hexbin goes to the niche holding most of its cells,
+density is the mean cell count of that niche's hexbins. Needs `ven_all.rds` (1.1 GB, ~60 s),
+so it is cached to `results/niche_hex_density.csv` — delete that file to recompute.
+
+```{r density-data}
+DENS_CSV <- file.path(RES, "niche_hex_density.csv")
+if (!file.exists(DENS_CSV)) {
+  message("computing hexbin density from ", VEN_ALL, " (this loads 1.1 GB)")
+  ven <- readRDS(VEN_ALL)
+  htb <- table(ven$hexbin_id, ven$niche)
+  hex_df <- data.frame(count = rowSums(htb), niche = colnames(htb)[max.col(htb)])
+  d <- vapply(split(hex_df$count, hex_df$niche), mean, numeric(1))
+  write_csv(tibble(cluster = names(d), density = as.numeric(d),
+                   n_hexbins = as.integer(table(hex_df$niche)[names(d)])), DENS_CSV)
+  rm(ven, htb); gc()
+}
+
+dens <- read_csv(DENS_CSV, show_col_types = FALSE) %>%
+  # ven_all labels niches with the OLD hyphenated codes (T-A, T-AA, ...), not cluster ids
+  mutate(niche = unname(REN[gsub("-", "_", cluster)])) %>%
+  filter(!is.na(niche), niche %in% NORDER) %>%
+  mutate(nn = factor(niche, levels = NORDER))
+stopifnot(nrow(dens) == length(NORDER))
+dens %>% arrange(desc(density)) %>% transmute(niche, density = round(density, 1))
+```
+
+# Panels
+
+Each chunk below builds one column and prints it, so you can re-run just the one you are
+tuning. The assembly chunk at the end puts them together.
+
+## 1. Niche swatch
+
+```{r panel-name, fig.width=2, fig.height=3.2}
+p_name <- ggplot(comp, aes(0, fct_rev(nn))) +
+  geom_tile(aes(fill = nn), width = 0.5, height = 0.5) +
+  geom_text(aes(x = 0.45, label = nn), hjust = 0, size = 3.5) +
+  scale_fill_manual(values = NCOL, guide = "none") +
+  scale_x_continuous(limits = c(-0.35, 2.4), expand = c(0, 0)) +
+  labs(title = "Niche") +
+  bare + theme(axis.text.x = element_blank())
+p_name
+```
+
+## 2. Abundance bar
+
+```{r panel-abundance, fig.width=3, fig.height=3.2}
+p_ab <- ggplot(comp, aes(abundance, fct_rev(nn), fill = nn)) +
+  geom_col(width = 0.62) +
+  scale_fill_manual(values = NCOL, guide = "none") +
+  scale_x_continuous(breaks = c(0, max(comp$abundance)), labels = c("0", "max"),
+                     expand = expansion(mult = c(0, 0.04))) +
+  labs(title = "Abundance", subtitle = "mean share of a specimen") +
+  bare + theme(axis.text.x = element_text(size = 8, colour = "grey40"),
+               plot.subtitle = element_text(size = 8, colour = "grey40"))
+p_ab
+```
+
+## 3. Density glow balls
+
+An unfilled grey ring with a halo tinted by the niche colour — identity without a second
+palette, size carrying the number.
+
+**The knob that bites:** `glow_size` is millimetres *added* around the ring, not a multiplier.
+The rows sit about `r sprintf("%.1f", 25.4 * params$fig_height * 0.55 / 8)` mm apart at the
+current `fig_height`, so a ring of `ball_max` + 2 × `glow_size` beyond roughly that will make
+neighbouring halos touch. Raise `fig_height` if you want both bigger.
+
+Sizes are spread over the observed range (9.1–13.2), not from zero: area-proportional sizing
+makes eight balls differing by <1.5× look identical. Read the column as a ranking, not a ratio.
+
+```{r panel-density, fig.width=2, fig.height=3.2}
+p_dn <- ggplot(dens, aes(1, fct_rev(nn))) +
+  ggshadow::geom_glowpoint(aes(size = density, shadowcolour = nn), shape = 16,
+                           colour = "grey50", alpha = 0,
+                           shadowalpha = params$glow_alpha, shadowsize = params$glow_size) +
+  ggshadow::scale_shadowcolour_manual(values = NCOL, guide = "none") +
+  geom_point(aes(size = density), shape = 21, fill = NA, colour = "grey35", stroke = 0.7) +
+  scale_size(range = c(params$ball_min, params$ball_max), name = "mean cells\nper hexbin",
+             breaks = c(9, 11, 13), limits = c(9, 13.3)) +
+  scale_x_continuous(limits = c(0.55, 1.45), breaks = NULL, expand = c(0, 0)) +
+  labs(title = "Density", subtitle = "mean cells per hexbin") +
+  bare + theme(plot.subtitle = element_text(size = 8, colour = "grey40"),
+               legend.position = "bottom", legend.title = element_text(size = 8),
+               legend.text = element_text(size = 7.5), legend.key.size = unit(0.6, "lines"))
+p_dn
+```
+
+## 4. Prevalence blocks
+
+One block per section, filled where that niche clears the hexbin threshold. `block_width`
+below 1 leaves the gaps; at 1 the blocks butt together into a bar.
+
+```{r panel-prevalence, fig.width=4, fig.height=3.2}
+pv_blocks <- prev %>%
+  tidyr::expand(nesting(nn, n_pat), slot = 1:N_PAT) %>%
+  mutate(on = slot <= n_pat)
+
+p_pv <- ggplot(pv_blocks, aes(slot, fct_rev(nn))) +
+  geom_tile(aes(fill = ifelse(on, as.character(nn), NA_character_)),
+            colour = "grey60", linewidth = 0.2,
+            width = params$block_width, height = params$block_height) +
+  scale_fill_manual(values = NCOL, na.value = "white", guide = "none") +
+  scale_x_continuous(breaks = NULL, expand = expansion(add = 0.5)) +
+  labs(title = "Prevalence",
+       subtitle = sprintf("patients with ≥%d hexbins (n/%d)", MIN_HEX, N_PAT)) +
+  bare + theme(plot.subtitle = element_text(size = 8, colour = "grey40"))
+p_pv
+```
+
+## 5. Transcriptional program
+
+```{r panel-program, fig.width=4, fig.height=3.2}
+p_pr <- ggplot(comp, aes(0, fct_rev(nn))) +
+  geom_text(aes(label = PROGRAM[as.character(nn)]), hjust = 0, size = 3.3) +
+  scale_x_continuous(limits = c(0, 1), expand = c(0, 0)) +
+  labs(title = "Transcriptional program") +
+  bare + theme(axis.text.x = element_blank())
+p_pr
+```
+
+## 6. Pathway dot plot
+
+Colour = mean logFC, size = significance in two steps, matching the concept's legend.
+
+```{r panel-dots, fig.width=8, fig.height=4}
+SORDER <- c("NOTCH","PDGF","RAS-MAPK","JAK-STAT","TGF-β","WNT","BMP")
+ROSSET <- c("OXPHOS [GOBP]", "KEAP1-NFE2L2")
+
+comb <- read_csv(file.path(RES, "combined_signalling_oxphos_nrf2.csv"), show_col_types = FALSE) %>%
+  filter(niche %in% NORDER) %>%
+  mutate(nn  = factor(niche, levels = NORDER),
+         grp = factor(ifelse(set %in% ROSSET, "ROS", "Signalling pathways"),
+                      levels = c("ROS", "Signalling pathways")),
+         set = factor(set, levels = c(ROSSET, SORDER)),
+         sig = FDR < !!FDR)
+stopifnot(!any(is.na(comb$set)))
+
+lim <- quantile(abs(comb$mean_logFC), 0.98, na.rm = TRUE)
+
+p_dot <- ggplot(comb, aes(set, fct_rev(nn))) +
+  geom_point(aes(fill = pmax(pmin(mean_logFC, lim), -lim), size = sig),
+             shape = 21, colour = "grey45", stroke = 0.3) +
+  facet_grid(. ~ grp, scales = "free_x", space = "free_x") +
+  scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#B2182B", midpoint = 0,
+                       name = "Score", limits = c(-lim, lim),
+                       # breaks pulled just inside the limits, else ggplot drops the end labels
+                       breaks = c(-lim, lim) * 0.97, labels = c("low", "high"),
+                       guide = guide_colourbar(display = "rectangles", barheight = 0.6,
+                                               barwidth = 6, title.position = "top",
+                                               direction = "horizontal")) +
+  scale_size_manual(values = c(`FALSE` = params$dot_ns, `TRUE` = params$dot_sig),
+                    labels = c(`FALSE` = "n.s.", `TRUE` = sprintf("FDR < %.2g", FDR)),
+                    name = NULL) +
+  guides(size = guide_legend(override.aes = list(fill = "white", colour = "grey45"))) +
+  labs(x = NULL, y = NULL) +
+  bare +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 8.5),
+        strip.text.x = element_text(size = 10),
+        panel.grid.major = element_line(colour = "grey93"),
+        legend.position = "bottom", legend.box = "horizontal",
+        legend.title = element_text(size = 9), legend.text = element_text(size = 8))
+p_dot
+```
+
+# Assembled figure
+
+`params$widths` is the relative width of each column, in the order they appear. patchwork
+aligns the panel areas, so the rows line up across all six regardless of what the axes below
+them take up.
+
+```{r assemble, fig.width=params$fig_width, fig.height=params$fig_height}
+fig <- p_name + p_ab + p_dn + p_pv + p_pr + p_dot +
+  plot_layout(nrow = 1, widths = params$widths) +
+  plot_annotation(title = "Figure 2A — niche summary",
+                  theme = theme(plot.title = element_text(face = "bold", size = 13)))
+fig
+```
+
+```{r save, eval=params$save}
+# svglite, never cairo's svg(): cairo composites through a filter + luminance masks that
+# Affinity Publisher ignores, importing the whole figure as solid black.
+ggsave(file.path(RES, "Fig2A.svg"), fig, device = svglite::svglite,
+       width = params$fig_width, height = params$fig_height)
+ggsave(file.path(RES, "Fig2A.png"), fig,
+       width = params$fig_width, height = params$fig_height, dpi = 200)
+cat("wrote", file.path(RES, c("Fig2A.svg", "Fig2A.png")), sep = "\n  ")
+```
+
+## The numbers behind the figure
+
+```{r summary}
+comp %>% left_join(prev, by = "niche") %>% left_join(dens, by = "niche") %>%
+  arrange(match(niche, NORDER)) %>%
+  transmute(niche, abundance = sprintf("%.1f%%", 100 * abundance),
+            density = round(density, 1),
+            prevalence = sprintf("%d/%d (%.0f%%)", n_pat, N_PAT, 100 * prevalence))
+```

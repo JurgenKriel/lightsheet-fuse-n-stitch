@@ -20,6 +20,8 @@ suppressMessages({
 
 RES <- if (length(commandArgs(TRUE))) commandArgs(TRUE)[1] else "results"
 FDR <- 0.05
+# hexbin object behind the old prevalence donuts (scripts/figures/niche_prev_density_code.r)
+SF_HEX <- "/vast/projects/BCRL_Multi_Omics/scripts/figures/sf_hex.rds"
 
 REN <- c(T_A="T-ROS", T_TC="T-PAN", T_P="T-P", T_AA="T-AC", T_AMN="T-MES", T_LE="T-OC",
          T_OM="T-GL", T_O="T-MET2", T_M="T-MET1", I="I", V="V", N="N")
@@ -86,18 +88,40 @@ p_ab <- ggplot(comp, aes(abundance, fct_rev(nn), fill = nn)) +
   bare + theme(axis.text.x = element_text(size = 8, colour = "grey40"),
                plot.subtitle = element_text(size = 8, colour = "grey40"))
 
-# ---- 3. prevalence blocks: one square per specimen, filled = carries the niche -------
-blocks <- comp %>%
-  tidyr::expand(nesting(nn, n_spec), slot = 1:N_SPEC) %>%
-  mutate(on = slot <= n_spec)
+# ---- 3. prevalence bar ---------------------------------------------------------------
+# Scored exactly as scripts/figures/niche_prev_density_code.r did for the donut version:
+#   colSums(table(patient, niche) >= MIN_HEX) / n_patients
+# i.e. a niche counts towards a patient only once it holds at least MIN_HEX hexbins there,
+# which is why this is lower than "has any cells at all" -- a few stray hexbins no longer
+# make a niche present. Same hexbin object as that script, so the numbers match the old
+# figure; only the mark changes, donuts -> bars.
+MIN_HEX <- 40
+NUM2OLD <- c("0"="T_LE","1"="T_AMN","2"="T_P","3"="V","4"="T_A","5"="T_M",
+             "6"="I","7"="N","8"="T_TC","9"="T_O","10"="T_OM","11"="T_AA")
 
-p_pv <- ggplot(blocks, aes(slot, fct_rev(nn))) +
-  geom_tile(aes(fill = ifelse(on, as.character(nn), NA_character_)),
-            colour = "grey55", linewidth = 0.3, width = 0.82, height = 0.62) +
-  scale_fill_manual(values = NCOL, na.value = "white", guide = "none") +
-  scale_x_continuous(breaks = NULL, expand = expansion(add = 0.5)) +
-  labs(title = "Prevalence", subtitle = sprintf("specimens (n/%d)", N_SPEC)) +
-  bare + theme(plot.subtitle = element_text(size = 8, colour = "grey40"))
+sf_hex <- readRDS(SF_HEX)
+tb     <- table(sf_hex$patient, sf_hex$niche)
+N_PAT  <- nrow(tb)                          # 26 sections, as in the old script
+hits   <- colSums(tb >= MIN_HEX)
+
+prev <- tibble(cluster = names(hits), n_pat = as.integer(hits)) %>%
+  mutate(niche = unname(REN[NUM2OLD[cluster]]),        # cluster id -> old code -> new name
+         prevalence = n_pat / N_PAT) %>%
+  filter(!is.na(niche), niche %in% NORDER) %>%         # drops the "white" background class
+  mutate(nn = factor(niche, levels = NORDER))
+stopifnot(nrow(prev) == length(NORDER))
+
+p_pv <- ggplot(prev, aes(prevalence, fct_rev(nn), fill = nn)) +
+  geom_col(width = 0.62) +
+  scale_fill_manual(values = NCOL, guide = "none") +
+  # the 0 tick is left unlabelled: it would collide with the abundance axis's "max"
+  scale_x_continuous(limits = c(0, 1), breaks = c(0, 0.5, 1),
+                     labels = c("", "50%", "100%"), expand = expansion(mult = c(0, 0.02))) +
+  labs(title = "Prevalence",
+       subtitle = sprintf("patients with ≥%d hexbins (n/%d)", MIN_HEX, N_PAT)) +
+  bare + theme(axis.text.x = element_text(size = 8, colour = "grey40"),
+               plot.subtitle = element_text(size = 8, colour = "grey40"),
+               panel.grid.major.x = element_line(colour = "grey92"))
 
 # ---- 4. transcriptional program text ------------------------------------------------
 p_pr <- ggplot(comp, aes(0, fct_rev(nn))) +
@@ -154,6 +178,6 @@ ggsave(file.path(RES, "Fig2A.svg"), fig, device = svglite::svglite, width = 15, 
 ggsave(file.path(RES, "Fig2A.png"), fig, width = 15, height = 4.6, dpi = 200)
 cat("wrote", file.path(RES, c("Fig2A.svg", "Fig2A.png")), sep = "\n  "); cat("\n\n")
 
-print(comp %>% arrange(match(niche, NORDER)) %>%
+print(comp %>% left_join(prev, by = "niche") %>% arrange(match(niche, NORDER)) %>%
         transmute(niche, abundance = sprintf("%.1f%%", 100 * abundance),
-                  prevalence = sprintf("%d/%d", n_spec, N_SPEC)))
+                  prevalence = sprintf("%d/%d (%.0f%%)", n_pat, N_PAT, 100 * prevalence)))

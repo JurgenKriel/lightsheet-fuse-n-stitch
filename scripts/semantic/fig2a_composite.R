@@ -21,7 +21,9 @@ suppressMessages({
 RES <- if (length(commandArgs(TRUE))) commandArgs(TRUE)[1] else "results"
 FDR <- 0.05
 # hexbin object behind the old prevalence donuts (scripts/figures/niche_prev_density_code.r)
-SF_HEX <- "/vast/projects/BCRL_Multi_Omics/scripts/figures/sf_hex.rds"
+SF_HEX  <- "/vast/projects/BCRL_Multi_Omics/scripts/figures/sf_hex.rds"
+# cell-level object behind the old density panel; only read when the density cache is absent
+VEN_ALL <- "/vast/projects/BCRL_Multi_Omics/scripts/figures/ven_all.rds"
 
 REN <- c(T_A="T-ROS", T_TC="T-PAN", T_P="T-P", T_AA="T-AC", T_AMN="T-MES", T_LE="T-OC",
          T_OM="T-GL", T_O="T-MET2", T_M="T-MET1", I="I", V="V", N="N")
@@ -99,10 +101,25 @@ MIN_HEX <- 40
 NUM2OLD <- c("0"="T_LE","1"="T_AMN","2"="T_P","3"="V","4"="T_A","5"="T_M",
              "6"="I","7"="N","8"="T_TC","9"="T_O","10"="T_OM","11"="T_AA")
 
+# sf_hex$patient is really a SECTION id, and patients contribute unequal numbers of them
+# (GX0008 x4, LGG-A/B/C and GL0043/48/97/184 x2, ven5 + ven5.2). Counting sections lets the
+# more heavily sectioned patients vote several times, so collapse to one vote per patient.
+section_to_patient <- function(s) {
+  s <- as.character(s)
+  dplyr::case_when(grepl("^GL[0-9]+", s) ~ sub("^(GL[0-9]+).*", "\\1", s),
+                   grepl("^GX",       s) ~ "GX0008",
+                   grepl("^LGG",      s) ~ sub("^(LGG-[A-Z]).*", "\\1", s),
+                   grepl("^ven",      s) ~ sub("^(ven[0-9]+).*", "\\1", s),
+                   TRUE                  ~ s)
+}
+
 sf_hex <- readRDS(SF_HEX)
-tb     <- table(sf_hex$patient, sf_hex$niche)
-N_PAT  <- nrow(tb)                          # 26 sections, as in the old script
-hits   <- colSums(tb >= MIN_HEX)
+tb     <- table(sf_hex$patient, sf_hex$niche)          # section x cluster
+# a patient carries the niche if ANY of its sections clears MIN_HEX. Pooling the sections
+# first would let thin scatter across several sections add up to a "present" call.
+by_pat <- rowsum((tb >= MIN_HEX) * 1, section_to_patient(rownames(tb))) > 0
+N_PAT  <- nrow(by_pat)                                 # 15 patients, from 26 sections
+hits   <- colSums(by_pat)
 
 prev <- tibble(cluster = names(hits), n_pat = as.integer(hits)) %>%
   mutate(niche = unname(REN[NUM2OLD[cluster]]),        # cluster id -> old code -> new name
@@ -123,6 +140,40 @@ p_pv <- ggplot(pv_blocks, aes(slot, fct_rev(nn))) +
   labs(title = "Prevalence",
        subtitle = sprintf("patients with ≥%d hexbins (n/%d)", MIN_HEX, N_PAT)) +
   bare + theme(plot.subtitle = element_text(size = 8, colour = "grey40"))
+
+# ---- 3b. density ---------------------------------------------------------------------
+# The other half of niche_prev_density_code.r: each hexbin goes to the niche holding most
+# of its cells, and density is the mean cell count of that niche's hexbins. Drawn here as a
+# bar in the niche palette rather than that script's viridis glow squares.
+# Computing it needs ven_all.rds (1.1 GB, ~60 s), so the result is cached beside the figure.
+DENS_CSV <- file.path(RES, "niche_hex_density.csv")
+if (!file.exists(DENS_CSV)) {
+  message("computing hexbin density from ", VEN_ALL, " (this loads 1.1 GB)")
+  ven <- readRDS(VEN_ALL)
+  htb <- table(ven$hexbin_id, ven$niche)
+  hex_df <- data.frame(count = rowSums(htb), niche = colnames(htb)[max.col(htb)])
+  d <- vapply(split(hex_df$count, hex_df$niche), mean, numeric(1))
+  write_csv(tibble(cluster = names(d), density = as.numeric(d),
+                   n_hexbins = as.integer(table(hex_df$niche)[names(d)])), DENS_CSV)
+  rm(ven, htb); gc()
+}
+
+dens <- read_csv(DENS_CSV, show_col_types = FALSE) %>%
+  # ven_all labels niches with the OLD hyphenated codes (T-A, T-AA, ...), not cluster ids
+  mutate(niche = unname(REN[gsub("-", "_", cluster)])) %>%
+  filter(!is.na(niche), niche %in% NORDER) %>%
+  mutate(nn = factor(niche, levels = NORDER))
+stopifnot(nrow(dens) == length(NORDER))
+
+p_dn <- ggplot(dens, aes(density, fct_rev(nn), fill = nn)) +
+  geom_col(width = 0.62) +
+  scale_fill_manual(values = NCOL, guide = "none") +
+  scale_x_continuous(breaks = c(0, max(dens$density)),
+                     labels = c("0", sprintf("%.0f", max(dens$density))),
+                     expand = expansion(mult = c(0, 0.04))) +
+  labs(title = "Density", subtitle = "mean cells per hexbin") +
+  bare + theme(axis.text.x = element_text(size = 8, colour = "grey40"),
+               plot.subtitle = element_text(size = 8, colour = "grey40"))
 
 # ---- 4. transcriptional program text ------------------------------------------------
 p_pr <- ggplot(comp, aes(0, fct_rev(nn))) +
@@ -170,8 +221,8 @@ p_dot <- ggplot(comb, aes(set, fct_rev(nn))) +
         legend.title = element_text(size = 9), legend.text = element_text(size = 8))
 
 # ---- assemble -----------------------------------------------------------------------
-fig <- p_name + p_ab + p_pv + p_pr + p_dot +
-  plot_layout(nrow = 1, widths = c(0.62, 0.8, 1.55, 1.15, 3.0)) +
+fig <- p_name + p_ab + p_dn + p_pv + p_pr + p_dot +
+  plot_layout(nrow = 1, widths = c(0.62, 0.75, 0.75, 1.05, 1.15, 3.0)) +
   plot_annotation(title = "Figure 2A — niche summary",
                   theme = theme(plot.title = element_text(face = "bold", size = 13)))
 
@@ -179,6 +230,8 @@ ggsave(file.path(RES, "Fig2A.svg"), fig, device = svglite::svglite, width = 15, 
 ggsave(file.path(RES, "Fig2A.png"), fig, width = 15, height = 4.6, dpi = 200)
 cat("wrote", file.path(RES, c("Fig2A.svg", "Fig2A.png")), sep = "\n  "); cat("\n\n")
 
-print(comp %>% left_join(prev, by = "niche") %>% arrange(match(niche, NORDER)) %>%
+print(comp %>% left_join(prev, by = "niche") %>% left_join(dens, by = "niche") %>%
+        arrange(match(niche, NORDER)) %>%
         transmute(niche, abundance = sprintf("%.1f%%", 100 * abundance),
+                  density = round(density, 1),
                   prevalence = sprintf("%d/%d (%.0f%%)", n_pat, N_PAT, 100 * prevalence)))
